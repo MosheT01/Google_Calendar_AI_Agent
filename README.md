@@ -18,7 +18,8 @@ A personal AI-powered assistant that combines real-time calendar management with
   - Conflict detection and resolution suggestions.
 - Handles complex queries like:
   - *"What’s my week looking like?"*
-  - *"Find a 2-hour free slot next week for lunch at noon."*
+  - *"Find a 2-hour free slot next week for lunch at noon with my Dad!"*
+  - *"push my next meeting by an hour."*
 
 ### 🎙️ **Voice Interaction**
 - **Speech-to-Text (STT)**: Speak naturally; your assistant understands.
