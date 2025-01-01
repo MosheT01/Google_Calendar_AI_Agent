@@ -1,7 +1,7 @@
-
 # AI Calendar Assistant
 
 A personal AI-powered assistant designed to manage and interact with my Google Calendar through voice chat. This app leverages the true potential of a conversational Large Language Model (LLM) to provide intelligent and natural calendar management in real-time.
+This Is Basically Like Giving ChatGPT Full Access To Your Calendar....
 
 ---
 
