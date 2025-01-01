@@ -1,125 +1,647 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:googleapis/calendar/v3.dart' as calendar;
+import 'package:googleapis_auth/auth_io.dart';
+import 'package:flutter/services.dart';
+import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:intl/intl.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:flutter_tts/flutter_tts.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+void main() => runApp(CalendarApp());
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  // This widget is the root of your application.
+class CalendarApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'AI Calendar Assistant',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: CalendarScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
+class CalendarScreen extends StatefulWidget {
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  _CalendarScreenState createState() => _CalendarScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _CalendarScreenState extends State<CalendarScreen> {
+  List<calendar.Event> twoWeeksEvents = [];
+  List<Map<String, String>> chatMessages = [];
+  final queryController = TextEditingController();
+  String? errorMessage;
+  late calendar.CalendarApi calendarApi;
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  final FlutterTts _flutterTts = FlutterTts();
+  bool _isListening = false;
+  String _lastVoiceInput = '';
+  final ScrollController _scrollController = ScrollController();
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
     });
   }
 
   @override
-  Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
+  void initState() {
+    super.initState();
+    initializeCalendarApi();
+    _initSpeechToText();
+    _initTextToSpeech();
+  }
+
+  void _initSpeechToText() async {
+    print("Initializing Speech-to-Text...");
+    bool available = await _speech.initialize(
+      onStatus: (status) => print("Speech-to-Text Status: $status"),
+      onError: (error) {
+        print("Speech-to-Text Error: $error");
+        _toggleListening();
+      },
+    );
+    if (!available) {
+      print("Speech-to-Text is NOT available.");
+    } else {
+      print("Speech-to-Text initialized successfully.");
+    }
+  }
+
+  void _toggleListening() async {
+    if (_isListening) {
+      print("Stopping Speech-to-Text...");
+      _speech.stop();
+      setState(() => _isListening = false);
+    } else {
+      print("Starting Speech-to-Text...");
+      // Stop TTS if it's speaking
+      await _flutterTts.stop();
+
+      bool available = await _speech.initialize(
+        onStatus: (status) {
+          print("Speech-to-Text Status: $status");
+          if (status == "notListening") {
+            _toggleListening();
+          }
+          if (status == "done") {
+            _toggleListening();
+          }
+        },
+        onError: (error) {
+          print("Speech-to-Text Error: $error");
+          _toggleListening();
+        },
+      );
+
+      if (available) {
+        print("Speech-to-Text is available.");
+        setState(() => _isListening = true);
+        _speech.listen(
+            onResult: (result) {
+              print("Speech-to-Text Result: ${result.recognizedWords}");
+              setState(() => _lastVoiceInput = result.recognizedWords);
+              if (result.finalResult) {
+                print("Final Speech-to-Text Result: $_lastVoiceInput");
+                _toggleListening(); // Stop listening automatically
+                handleUserQuery(_lastVoiceInput);
+              }
+            },
+            listenOptions: stt.SpeechListenOptions(
+              autoPunctuation: true,
+              enableHapticFeedback: true,
+              cancelOnError: false,
+            ));
+      } else {
+        print("The user has denied microphone permissions.");
+      }
+    }
+  }
+
+  void _initTextToSpeech() {
+    _flutterTts.setLanguage('en-US');
+    _flutterTts.setVolume(1.0);
+    _flutterTts.setSpeechRate(0.5);
+    _flutterTts.setPitch(1.0);
+    _flutterTts.setCompletionHandler(() {
+      print("TTS completed.");
+      _toggleListening(); // Automatically restart listening after speech
+    });
+  }
+
+  Future<void> initializeCalendarApi() async {
+    try {
+      print("Initializing Calendar API...");
+      final credentials = jsonDecode(
+        await rootBundle.loadString('assets/service_account.json'),
+      );
+
+      final accountCredentials =
+          ServiceAccountCredentials.fromJson(credentials);
+
+      final authClient = await clientViaServiceAccount(
+        accountCredentials,
+        [calendar.CalendarApi.calendarScope],
+      );
+
+      calendarApi = calendar.CalendarApi(authClient);
+      print("Calendar API initialized successfully.");
+      await fetchTwoWeeksEvents();
+    } catch (e) {
+      print("Error initializing Calendar API: $e");
+      setState(() {
+        errorMessage = "Failed to initialize Calendar API: $e";
+      });
+    }
+  }
+
+  Future<List<calendar.Event>> fetchEventsForTwoWeeks() async {
+    print("Fetching events for the next two weeks starting from yesterday...");
+    try {
+      final now = DateTime.now().toUtc();
+      final startOfRange = now.subtract(Duration(days: 1));
+      final endOfRange = startOfRange.add(Duration(days: 14));
+
+      final eventsResult = await calendarApi.events.list(
+        'mousatams@gmail.com',
+        timeMin: startOfRange,
+        timeMax: endOfRange,
+        singleEvents: true,
+        orderBy: 'startTime',
+      );
+
+      print("Fetched ${eventsResult.items?.length ?? 0} events.");
+      return eventsResult.items?.map((event) {
+            event.start?.dateTime = event.start?.dateTime?.toLocal();
+            event.end?.dateTime = event.end?.dateTime?.toLocal();
+            return event;
+          }).toList() ??
+          [];
+    } catch (e) {
+      print("Error fetching events for two weeks: $e");
+      return [];
+    }
+  }
+
+  Future<void> fetchTwoWeeksEvents() async {
+    final events = await fetchEventsForTwoWeeks();
+    setState(() {
+      twoWeeksEvents = events;
+    });
+  }
+
+  String formatEventsForGPT(List<calendar.Event> events) {
+    print("Formatting events for GPT...");
+    final buffer = StringBuffer();
+    for (var event in events) {
+      final start = event.start?.dateTime ?? event.start?.date;
+      final end = event.end?.dateTime ?? event.end?.date;
+      buffer.writeln("Event ID: ${event.id ?? 'No ID'}");
+      buffer.writeln("Event: ${event.summary ?? 'No Title'}");
+      buffer.writeln("  Start: ${start?.toIso8601String() ?? 'Unknown'}");
+      buffer.writeln("  End: ${end?.toIso8601String() ?? 'Unknown'}");
+      if (event.description != null) {
+        buffer.writeln("  Description: ${event.description}");
+      }
+      if (event.location != null) {
+        buffer.writeln("  Location: ${event.location}");
+      }
+      buffer.writeln("------");
+    }
+    return buffer.toString();
+  }
+
+  Future<String> queryGeminiFlashWithCalendarData(String userQuery) async {
+    print("Querying Gemini AI with User Query: $userQuery");
+    final formattedEvents = formatEventsForGPT(twoWeeksEvents);
+    print("Formatted Events for AI Input:\n$formattedEvents");
+
+    try {
+      print("Initializing Gemini Flash API...");
+      final apiKey = jsonDecode(
+        await rootBundle.loadString('assets/gemini_api_key.json'),
+      )['apiKey'];
+
+      final model = GenerativeModel(
+        generationConfig: GenerationConfig(
+          maxOutputTokens: 500,
+          temperature: 1.7,
+        ),
+        model: 'gemini-1.5-flash',
+        systemInstruction: Content.system(
+            '''You are an AI assistant with access to the user's calendar for the next two weeks.
+today = ${DateFormat('yyyy-MM-dd').format(DateTime.now())} and the day is ${DateFormat('EEEE').format(DateTime.now())}.
+Your responses must strictly adhere to the following format:
+
+**Response Modes:**
+1. **Clarifying Mode**: Start your response with `mode=clarifying` followed by the clarification question.
+   Example: `mode=clarifying What is the title of the event and what time is the event?`
+
+2. **Code Output Mode**: Start your response with `mode=code_output` followed by a stack of commands in the format:
+   `commandsToBeExecutedStack={command1|||command2|||...}` \n Reasoning: your reasoning here.
+   Example: `mode=code_output commandsToBeExecutedStack={addEvent(title: "Lunch", startTime: "2025-01-02T12:00:00.000", endTime: "2025-01-02T13:00:00.000")} \n reasoning: The user wants to add a lunch event on January 2, 2025, from 12:00 PM to 1:00 PM.`
+
+3. **Generic Response Mode**:Start your response with `mode=generic` followed by the response text. use this when you don't need to execute any commands for example when the user asks for information regrading the calendar data you already have.
+   Example: `User: what do I have on my calendar tommorow?` Response: `mode=generic tommorow you have Event1 at 12:00 PM and Event2 at 2:00 PM`
+   Example: `mode=generic Sure, I can help you with that.` 
+   in this mode you provide helpful insight like alerting when the user is trying to add an event that conflicts with an existing event.
+   or when the user is trying to update an event that does not exist.
+   or when the user has two events that conflict with each other.
+   example: what do I have on my calendar tommorow? Response: mode=generic tommorow you have Event1 at 12:00 PM till 1:00 PM and Event2 at 12:30 PM till 1:30 PM ,be aware that Event1 and Event2 overlap each other, would you like to update any of them?.
+   you have more freedom in this mode to provide any helpful information to the user be creative.
+
+
+**Important Rules:**
+- Do not include prefixes like "Assistant:" in your response.
+- Do not add any explanation, context, or extra text.
+- Your response must only contain the mode and the commands or questions as specified above.
+- use the event IDs from the calendar data you have in the conversation history to update or delete events.
+- when the user says "it" or "that" in the response you should refer to the last event mentioned in the conversation history.
+- never mention event ids to the user, only use them to update or delete events.
+- when the user asks for information regarding the calendar data you already have, respond in generic mode.
+- when the user asks to add an event that conflicts with an existing event, respond in generic mode.
+- if you come accross anything that is not english text,translare it to english before responding and respond with the english translation.
+- always responds in a neat and organised way that is best for text to speech.
+- always add a confirmation step before executing any command,in this step explain to the user what you are about to do fully and ask for confirmation.
+
+Respond strictly as instructed.
+The minimum info needed to add an event is the title and start time; the end time defaults to 1 hour after the start time.
+The minimum info needed to update an event is the event ID.
+Use the event IDs from the calendar data above to update or delete events.
+
+ '''),
+        apiKey: apiKey,
+      );
+
+      print("Initializing Generative Model...");
+      final conversationHistory = chatMessages.map((message) {
+        print(
+            "Chat Message Role: ${message['role']} Content: ${message['content']}");
+        return Content.text(
+          '${message['role'] == 'user' ? 'User' : 'model'}: ${message['content']}',
+        );
+      }).toList();
+
+      conversationHistory.add(Content.text('User: $userQuery'));
+      print("Conversation History Sent to AI:\n$conversationHistory");
+
+      print("Sending Request to Gemini AI...");
+      final response = await model.generateContent(safetySettings: [
+        SafetySetting(HarmCategory.sexuallyExplicit, HarmBlockThreshold.none),
+        SafetySetting(HarmCategory.dangerousContent, HarmBlockThreshold.none),
+        SafetySetting(HarmCategory.hateSpeech, HarmBlockThreshold.none),
+        SafetySetting(HarmCategory.harassment, HarmBlockThreshold.none),
+      ], [
+        Content.text(
+          '''You are an AI assistant with access to the user's calendar for the next two weeks.
+today = ${DateFormat('yyyy-MM-dd').format(DateTime.now())} and the day is ${DateFormat('EEEE').format(DateTime.now())}.
+Your responses must strictly adhere to the following format:
+
+**Response Modes:**
+1. **Clarifying Mode**: Start your response with `mode=clarifying` followed by the clarification question.
+   Example: `mode=clarifying What is the title of the event and what time is the event?`
+
+2. **Code Output Mode**: Start your response with `mode=code_output` followed by a stack of commands in the format:
+   `commandsToBeExecutedStack={command1|||command2|||...}` \n Reasoning: your reasoning here.
+   Example: `mode=code_output commandsToBeExecutedStack={addEvent(title: "Lunch", startTime: "2025-01-02T12:00:00.000", endTime: "2025-01-02T13:00:00.000")} \n reasoning: The user wants to add a lunch event on January 2, 2025, from 12:00 PM to 1:00 PM.`
+
+3. **Generic Response Mode**:Start your response with `mode=generic` followed by the response text. use this when you don't need to execute any commands for example when the user asks for information regrading the calendar data you already have.
+   Example: `User: what do I have on my calendar tommorow?` Response: `mode=generic tommorow you have Event1 at 12:00 PM and Event2 at 2:00 PM`
+   Example: `mode=generic Sure, I can help you with that.` 
+   in this mode you provide helpful insight like alerting when the user is trying to add an event that conflicts with an existing event.
+   or when the user is trying to update an event that does not exist.
+   or when the user has two events that conflict with each other.
+   example: what do I have on my calendar tommorow? Response: mode=generic tommorow you have Event1 at 12:00 PM till 1:00 PM and Event2 at 12:30 PM till 1:30 PM ,be aware that Event1 and Event2 overlap each other, would you like to update any of them?.
+   you have more freedom in this mode to provide any helpful information to the user be creative.
+
+
+**Important Rules:**
+- Do not include prefixes like "Assistant:" in your response.
+- Do not add any explanation, context, or extra text.
+- Your response must only contain the mode and the commands or questions as specified above.
+- use the event IDs from the calendar data you have in the conversation history to update or delete events.
+- when the user says "it" or "that" in the response you should refer to the last event mentioned in the conversation history.
+- never mention event ids to the user, only use them to update or delete events.
+- when the user asks for information regarding the calendar data you already have, respond in generic mode.
+- when the user asks to add an event that conflicts with an existing event, respond in generic mode.
+- if you come accross anything that is not english text,translare it to english before responding and respond with the english translation.
+- always responds in a neat and organised way that is best for text to speech.
+- always add a confirmation step before executing any command,in this step explain to the user what you are about to do fully and ask for confirmation.
+
+Respond strictly as instructed.
+The minimum info needed to add an event is the title and start time; the end time defaults to 1 hour after the start time.
+The minimum info needed to update an event is the event ID.
+Use the event IDs from the calendar data above to update or delete events.
+\n 
+    
+Here is the user's calendar data:
+$formattedEvents \n
+The user query: $userQuery
+      ''',
+        ),
+        ...conversationHistory,
+      ]);
+
+      print("AI Response: ${response.text}");
+      return response.text ?? "Error: No response received.";
+    } catch (e) {
+      print("Error querying Gemini AI: $e");
+      return "Error: $e";
+    }
+  }
+
+  void executeCommandStack(List<String> commands) {
+    print("Executing command stack: $commands");
+    for (final command in commands.reversed) {
+      if (command.startsWith('addEvent')) {
+        final args = parseArguments(command);
+        final title = args['title'];
+        final startTime = args['startTime'] != null
+            ? DateTime.parse(args['startTime']!)
+            : null;
+        final endTime =
+            args['endTime'] != null ? DateTime.parse(args['endTime']!) : null;
+
+        if (title != null && startTime != null) {
+          addEvent(
+            title,
+            startTime,
+            endTime: endTime,
+            description: args['description'],
+            location: args['location'],
+          );
+        } else {
+          print("Missing required arguments for addEvent.");
+        }
+      } else if (command.startsWith('updateEvent')) {
+        final args = parseArguments(command);
+        final eventId = args['eventId'];
+        if (eventId != null) {
+          updateEvent(
+            eventId,
+            title: args['title'],
+            startTime: args['startTime'] != null
+                ? DateTime.parse(args['startTime']!)
+                : null,
+            endTime: args['endTime'] != null
+                ? DateTime.parse(args['endTime']!)
+                : null,
+            description: args['description'],
+            location: args['location'],
+          );
+        } else {
+          print("Missing eventId for updateEvent.");
+        }
+      } else if (command.startsWith('deleteEvent')) {
+        final args = parseArguments(command);
+        final eventId = args['eventId'];
+        if (eventId != null) {
+          deleteEvent(eventId);
+        } else {
+          print("Missing eventId for deleteEvent.");
+        }
+      }
+    }
+  }
+
+  Map<String, String> parseArguments(String command) {
+    print("Parsing command arguments: $command");
+    final args = <String, String>{};
+
+    // Extract the content within the parentheses
+    final regex = RegExp(r'\((.*)\)');
+    final match = regex.firstMatch(command);
+    if (match == null) {
+      print("No arguments found in command: $command");
+      return args;
+    }
+
+    // Get the content inside parentheses
+    final arguments = match.group(1);
+    if (arguments == null) {
+      print("No arguments found within parentheses.");
+      return args;
+    }
+
+    // Match key-value pairs with possible nested quotes
+    final keyValueRegex = RegExp(r'(\w+)\s*:\s*(".*?"|[^,]+)');
+    for (final match in keyValueRegex.allMatches(arguments)) {
+      final key = match.group(1)?.trim();
+      var value = match.group(2)?.trim();
+
+      if (key != null && value != null) {
+        // Remove surrounding quotes from the value if present
+        if ((value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.substring(1, value.length - 1);
+        }
+        args[key] = value;
+      }
+    }
+
+    print("Parsed arguments: $args");
+    return args;
+  }
+
+  void handleUserQuery(String query) async {
+    if (query.isEmpty) return;
+
+    print("Handling user query: $query");
+
+    // Add user message to chat
+    setState(() {
+      chatMessages.add({'role': 'user', 'content': query});
+    });
+    _scrollToBottom(); // Scroll to the latest message
+
+    // Query GPT
+    final response = await queryGeminiFlashWithCalendarData(query);
+
+    print("Received GPT Response: $response");
+
+    String cleanResponse(String response) {
+      // Remove "mode=..." prefix from the response
+      return response.replaceFirst(RegExp(r'^mode=\w+\s*'), '').trim();
+    }
+
+    if (response.startsWith('mode=clarifying')) {
+      setState(() {
+        chatMessages.add({'role': 'model', 'content': cleanResponse(response)});
+      });
+
+      _speak(cleanResponse(response));
+    } else if (response.startsWith('mode=code_output')) {
+      final commandStack = extractCommandStack(response);
+      executeCommandStack(commandStack);
+      setState(() {
+        chatMessages.add({
+          'role': 'model',
+          'content': response,
+        });
+      });
+      _speak(cleanResponse(response));
+      _speak(
+          "Executed ${commandStack.length} commands. Reason: ${cleanResponse(response).split('reasoning:').last.trim()}");
+    } else {
+      // Generic response handling
+      setState(() {
+        chatMessages.add({'role': 'model', 'content': cleanResponse(response)});
+      });
+      _speak(cleanResponse(response));
+    }
+    _scrollToBottom(); // Scroll to the latest message
+  }
+
+  Future<void> _speak(String text) async {
+    if (_isListening) {
+      print("Mic is active, skipping TTS.");
+      return; // Skip TTS if the mic is listening
+    }
+
+    print("Speaking Text: $text");
+    await _flutterTts.speak(text);
+    _flutterTts.setCompletionHandler(() {
+      print("TTS completed, restarting mic...");
+      _toggleListening(); // Automatically restart listening
+    });
+  }
+
+  List<String> extractCommandStack(String response) {
+    print("Extracting command stack from response: $response");
+
+    final startIndex = response.indexOf('{');
+    final endIndex = response.indexOf('}');
+    if (startIndex != -1 && endIndex != -1) {
+      final commandsString = response.substring(startIndex + 1, endIndex);
+      return commandsString.split('|||').map((cmd) => cmd.trim()).toList();
+    }
+
+    print("No command stack found in response.");
+    return [];
+  }
+
+  void addEvent(String title, DateTime startTime,
+      {DateTime? endTime, String? description, String? location}) {
+    print("Adding event: $title");
+    final event = calendar.Event(
+      summary: title,
+      start: calendar.EventDateTime(dateTime: startTime.toUtc()),
+      end: calendar.EventDateTime(
+          dateTime: (endTime ?? startTime.add(Duration(hours: 1))).toUtc()),
+      description: description,
+      location: location,
+    );
+
+    calendarApi.events.insert(event, 'mousatams@gmail.com').then((value) {
+      print("Event added: ${value.summary}");
+      fetchTwoWeeksEvents();
+    }).catchError((error) {
+      print("Error adding event: $error");
+    });
+  }
+
+  void updateEvent(String eventId,
+      {String? title,
+      DateTime? startTime,
+      DateTime? endTime,
+      String? description,
+      String? location}) {
+    print("Updating event: $eventId");
+    calendarApi.events.get('mousatams@gmail.com', eventId).then((event) {
+      if (title != null) event.summary = title;
+      if (startTime != null)
+        event.start = calendar.EventDateTime(dateTime: startTime.toUtc());
+      if (endTime != null)
+        event.end = calendar.EventDateTime(dateTime: endTime.toUtc());
+      if (description != null) event.description = description;
+      if (location != null) event.location = location;
+
+      calendarApi.events
+          .update(event, 'mousatams@gmail.com', eventId)
+          .then((value) {
+        print("Event updated: ${value.summary}");
+        fetchTwoWeeksEvents();
+      }).catchError((error) {
+        print("Error updating event: $error");
+      });
+    }).catchError((error) {
+      print("Error fetching event: $error");
+    });
+  }
+
+  void deleteEvent(String eventId) {
+    print("Deleting event: $eventId");
+    calendarApi.events.delete('mousatams@gmail.com', eventId).then((_) {
+      print("Event deleted: $eventId");
+      fetchTwoWeeksEvents();
+    });
+  }
+
+  Widget _buildChatBubble(String message, bool isUser) {
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+        padding: EdgeInsets.all(15),
+        decoration: BoxDecoration(
+          color: isUser ? Colors.blue[300] : Colors.grey[300],
+          borderRadius: BorderRadius.circular(15),
+        ),
+        child: Text(
+          message,
+          style: TextStyle(
+            fontSize: 16,
+            color: isUser ? Colors.white : Colors.black87,
+          ),
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('AI Calendar Assistant')),
+      body: Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollController, // Attach the scroll controller
+              itemCount: chatMessages.length,
+              itemBuilder: (context, index) {
+                final message = chatMessages[index];
+                final isUser = message['role'] == 'user';
+                return _buildChatBubble(message['content'] ?? '', isUser);
+              },
+            ),
+          ),
+          Container(
+            padding: EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.grey[200],
+              boxShadow: [BoxShadow(blurRadius: 2, color: Colors.black26)],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  icon: Icon(
+                    _isListening ? Icons.mic : Icons.mic_off,
+                    color: _isListening ? Colors.red : Colors.grey,
+                  ),
+                  onPressed: _toggleListening,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
