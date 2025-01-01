@@ -1,6 +1,3 @@
-Here's an updated **README.md** incorporating your request:
-
----
 
 # AI Calendar Assistant
 
@@ -69,6 +66,3 @@ Managing a busy schedule can be overwhelming, and I wanted a solution that feels
 
 This app is a personal project created solely for my use. It leverages private APIs and configurations tailored to my lifestyle and is not intended for distribution or public use.
 
---- 
-
-This README highlights the unique blend of AI, real-time interactivity, and voice chat capabilities that make your project stand out. Let me know if you'd like further refinements!
