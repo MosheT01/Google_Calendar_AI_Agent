@@ -226,7 +226,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       print("Initializing Gemini Flash API...");
       final apiKey = jsonDecode(
         await rootBundle.loadString('assets/gemini_api_key.json'),
-      )['apiKey'];
+      )['api_key'];
 
       final model = GenerativeModel(
         generationConfig: GenerationConfig(
@@ -246,6 +246,12 @@ Your responses must strictly adhere to the following format:
 2. **Code Output Mode**: Start your response with `mode=code_output` followed by a stack of commands in the format:
    `commandsToBeExecutedStack={command1|||command2|||...}` \n Reasoning: your reasoning here.
    Example: `mode=code_output commandsToBeExecutedStack={addEvent(title: "Lunch", startTime: "2025-01-02T12:00:00.000", endTime: "2025-01-02T13:00:00.000")} \n reasoning: The user wants to add a lunch event on January 2, 2025, from 12:00 PM to 1:00 PM.`
+   You have access to these functions to manipulate the calendar: and only these! no more no less.
+          1. addEvent(String title, DateTime startTime, {DateTime? endTime,String? description,String? location,String? colorId})
+          2. updateEvent(String eventId,{String? title,DateTime? startTime,DateTime? endTime,String? description,String? location,String? colorId})
+          3. deleteEvent(String eventId)
+          for refrence colorOptions = {"1": "Lavender","2": "Sage","3": "Grape","4": "Flamingo","5": "Banana","6": "Tangerine","7": "Peacock","8": "Graphite", "9": "Blueberry", "10": "Basil", "11": "Tomato",}
+
 
 3. **Generic Response Mode**:Start your response with `mode=generic` followed by the response text. use this when you don't need to execute any commands for example when the user asks for information regrading the calendar data you already have.
    Example: `User: what do I have on my calendar tommorow?` Response: `mode=generic tommorow you have Event1 at 12:00 PM and Event2 at 2:00 PM`
@@ -263,12 +269,13 @@ Your responses must strictly adhere to the following format:
 - Your response must only contain the mode and the commands or questions as specified above.
 - use the event IDs from the calendar data you have in the conversation history to update or delete events.
 - when the user says "it" or "that" in the response you should refer to the last event mentioned in the conversation history.
-- never mention event ids to the user, only use them to update or delete events.
+- never mention event id to the user, only use them to update or delete events.
 - when the user asks for information regarding the calendar data you already have, respond in generic mode.
 - when the user asks to add an event that conflicts with an existing event, respond in generic mode.
 - if you come accross anything that is not english text,translare it to english before responding and respond with the english translation.
 - always responds in a neat and organised way that is best for text to speech.
 - always add a confirmation step before executing any command,in this step explain to the user what you are about to do fully and ask for confirmation.
+-if the user doent have any event for a timeslot in the calendar it means he is free at that time.
 
 Respond strictly as instructed.
 The minimum info needed to add an event is the title and start time; the end time defaults to 1 hour after the start time.
@@ -310,6 +317,11 @@ Your responses must strictly adhere to the following format:
 2. **Code Output Mode**: Start your response with `mode=code_output` followed by a stack of commands in the format:
    `commandsToBeExecutedStack={command1|||command2|||...}` \n Reasoning: your reasoning here.
    Example: `mode=code_output commandsToBeExecutedStack={addEvent(title: "Lunch", startTime: "2025-01-02T12:00:00.000", endTime: "2025-01-02T13:00:00.000")} \n reasoning: The user wants to add a lunch event on January 2, 2025, from 12:00 PM to 1:00 PM.`
+   You have access to these functions to manipulate the calendar: and only these! no more no less.
+          1. addEvent(String title, DateTime startTime, {DateTime? endTime,String? description,String? location,String? colorId})
+          2. updateEvent(String eventId,{String? title,DateTime? startTime,DateTime? endTime,String? description,String? location,String? colorId})
+          3. deleteEvent(String eventId)
+          for refrence colorOptions = {"1": "Lavender","2": "Sage","3": "Grape","4": "Flamingo","5": "Banana","6": "Tangerine","7": "Peacock","8": "Graphite", "9": "Blueberry", "10": "Basil", "11": "Tomato",}
 
 3. **Generic Response Mode**:Start your response with `mode=generic` followed by the response text. use this when you don't need to execute any commands for example when the user asks for information regrading the calendar data you already have.
    Example: `User: what do I have on my calendar tommorow?` Response: `mode=generic tommorow you have Event1 at 12:00 PM and Event2 at 2:00 PM`
@@ -327,13 +339,13 @@ Your responses must strictly adhere to the following format:
 - Your response must only contain the mode and the commands or questions as specified above.
 - use the event IDs from the calendar data you have in the conversation history to update or delete events.
 - when the user says "it" or "that" in the response you should refer to the last event mentioned in the conversation history.
-- never mention event ids to the user, only use them to update or delete events.
+- you never mention event id to the user, only use them to update or delete events.
 - when the user asks for information regarding the calendar data you already have, respond in generic mode.
 - when the user asks to add an event that conflicts with an existing event, respond in generic mode.
 - if you come accross anything that is not english text,translare it to english before responding and respond with the english translation.
 - always responds in a neat and organised way that is best for text to speech.
 - always add a confirmation step before executing any command,in this step explain to the user what you are about to do fully and ask for confirmation.
-
+- if the user doent have any event for a timeslot in the calendar it means he is free at that time.
 Respond strictly as instructed.
 The minimum info needed to add an event is the title and start time; the end time defaults to 1 hour after the start time.
 The minimum info needed to update an event is the event ID.
@@ -375,6 +387,7 @@ The user query: $userQuery
             endTime: endTime,
             description: args['description'],
             location: args['location'],
+            colorId: args['colorId'],
           );
         } else {
           print("Missing required arguments for addEvent.");
@@ -394,6 +407,7 @@ The user query: $userQuery
                 : null,
             description: args['description'],
             location: args['location'],
+            colorId: args['colorId'],
           );
         } else {
           print("Missing eventId for updateEvent.");
@@ -527,7 +541,10 @@ The user query: $userQuery
   }
 
   void addEvent(String title, DateTime startTime,
-      {DateTime? endTime, String? description, String? location}) {
+      {DateTime? endTime,
+      String? description,
+      String? location,
+      String? colorId}) {
     print("Adding event: $title");
     final event = calendar.Event(
       summary: title,
@@ -536,6 +553,7 @@ The user query: $userQuery
           dateTime: (endTime ?? startTime.add(Duration(hours: 1))).toUtc()),
       description: description,
       location: location,
+      colorId: colorId, // Add the colorId
     );
 
     calendarApi.events.insert(event, 'mousatams@gmail.com').then((value) {
@@ -551,7 +569,8 @@ The user query: $userQuery
       DateTime? startTime,
       DateTime? endTime,
       String? description,
-      String? location}) {
+      String? location,
+      String? colorId}) {
     print("Updating event: $eventId");
     calendarApi.events.get('mousatams@gmail.com', eventId).then((event) {
       if (title != null) event.summary = title;
@@ -561,6 +580,7 @@ The user query: $userQuery
         event.end = calendar.EventDateTime(dateTime: endTime.toUtc());
       if (description != null) event.description = description;
       if (location != null) event.location = location;
+      if (colorId != null) event.colorId = colorId; // Add the colorId
 
       calendarApi.events
           .update(event, 'mousatams@gmail.com', eventId)
@@ -607,7 +627,9 @@ The user query: $userQuery
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('AI Calendar Assistant')),
+      appBar: AppBar(
+        title: Center(child: Text('AI Calendar Assistant')),
+      ),
       body: Column(
         children: [
           Expanded(
@@ -627,16 +649,79 @@ The user query: $userQuery
               color: Colors.grey[200],
               boxShadow: [BoxShadow(blurRadius: 2, color: Colors.black26)],
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Column(
               children: [
-                IconButton(
-                  icon: Icon(
-                    _isListening ? Icons.mic : Icons.mic_off,
-                    color: _isListening ? Colors.red : Colors.grey,
-                  ),
-                  onPressed: _toggleListening,
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: queryController,
+                        decoration: InputDecoration(
+                          hintText: "Type a message...",
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                          contentPadding: EdgeInsets.symmetric(
+                            vertical: 10,
+                            horizontal: 20,
+                          ),
+                        ),
+                        onSubmitted: (value) {
+                          if (value.isNotEmpty) {
+                            handleUserQuery(value);
+                            queryController.clear();
+                          }
+                        },
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.send, color: Colors.blue),
+                      onPressed: () {
+                        final text = queryController.text.trim();
+                        if (text.isNotEmpty) {
+                          handleUserQuery(text);
+                          queryController.clear();
+                        }
+                      },
+                    ),
+                  ],
                 ),
+                SizedBox(height: 10),
+                GestureDetector(
+                  onTap: _toggleListening,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Pulsating animation
+                      AnimatedOpacity(
+                        opacity: _isListening ? 1.0 : 0.0,
+                        duration: Duration(seconds: 1),
+                        child: Container(
+                          width: 100,
+                          height: 100,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.red.withOpacity(0.3),
+                          ),
+                        ),
+                      ),
+                      Container(
+                        width: 200,
+                        height: 200,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _isListening ? Colors.red : Colors.grey,
+                        ),
+                        child: Icon(
+                          Icons.mic,
+                          color: Colors.white,
+                          size: 90,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 10),
               ],
             ),
           ),
