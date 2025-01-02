@@ -56,6 +56,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
     initializeCalendarApi();
     _initSpeechToText();
     _initTextToSpeech();
+    // Start listening after 3 seconds
+    Future.delayed(Duration(seconds: 1), () {
+      _toggleListening(); // Automatically start listening
+    });
   }
 
   void _initSpeechToText() async {
