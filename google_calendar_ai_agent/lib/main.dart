@@ -5,6 +5,8 @@ import 'package:googleapis_auth/auth_io.dart';
 import 'package:flutter/services.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:logger/logger.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
 
@@ -37,6 +39,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
   bool _isListening = false;
   String _lastVoiceInput = '';
   final ScrollController _scrollController = ScrollController();
+  late ChatSession _chat;
+  bool _isChatInitialized = false;
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -53,12 +57,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
   @override
   void initState() {
     super.initState();
-    initializeCalendarApi();
-    _initSpeechToText();
-    _initTextToSpeech();
-    // Start listening after 3 seconds
-    Future.delayed(Duration(seconds: 1), () {
-      _toggleListening(); // Automatically start listening
+    loadChatHistory().then((_) {
+      initializeCalendarApi().then((_) {
+        _initSpeechToText();
+        initializeChat();
+      });
     });
   }
 
@@ -75,6 +78,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       print("Speech-to-Text is NOT available.");
     } else {
       print("Speech-to-Text initialized successfully.");
+      _toggleListening();
     }
   }
 
@@ -92,15 +96,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
         onStatus: (status) {
           print("Speech-to-Text Status: $status");
           if (status == "notListening") {
-            _toggleListening();
+            setState(() => _isListening = false);
           }
           if (status == "done") {
-            _toggleListening();
+            setState(() => _isListening = false);
           }
         },
         onError: (error) {
           print("Speech-to-Text Error: $error");
-          _toggleListening();
+          setState(() => _isListening = false);
         },
       );
 
@@ -222,22 +226,50 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Future<String> queryGeminiFlashWithCalendarData(String userQuery) async {
+    if (!_isChatInitialized) {
+      return "Error: Chat is not initialized.";
+    }
+
     print("Querying Gemini AI with User Query: $userQuery");
     final formattedEvents = formatEventsForGPT(twoWeeksEvents);
     print("Formatted Events for AI Input:\n$formattedEvents");
 
     try {
-      print("Initializing Gemini Flash API...");
+      final content = Content.text(
+          '''You are an AI assistant with access to the user's calendar for the next two weeks.
+today = ${DateFormat('yyyy-MM-dd').format(DateTime.now())} and the day is ${DateFormat('EEEE').format(DateTime.now())}.
+
+    
+Here is the user's calendar data:
+$formattedEvents \n
+The user query: $userQuery
+      ''');
+
+      final response = await _chat.sendMessage(content);
+      print("AI Response: ${response.text}");
+      return response.text ?? "Error: No response received.";
+    } catch (e) {
+      print("Error querying Gemini AI: $e");
+      return "Error: $e";
+    }
+  }
+
+  Future<void> initializeChat() async {
+    try {
+      print("Initializing Gemini Chat...");
       final apiKey = jsonDecode(
         await rootBundle.loadString('assets/gemini_api_key.json'),
       )['api_key'];
 
       final model = GenerativeModel(
-        generationConfig: GenerationConfig(
-          maxOutputTokens: 500,
-          temperature: 1.7,
-        ),
         model: 'gemini-1.5-flash',
+        apiKey: apiKey,
+        generationConfig: GenerationConfig(
+          topK: 80,
+          topP: 0.9,
+          temperature: 2,
+          maxOutputTokens: 1000,
+        ),
         systemInstruction: Content.system(
             '''You are an AI assistant with access to the user's calendar for the next two weeks.
 today = ${DateFormat('yyyy-MM-dd').format(DateTime.now())} and the day is ${DateFormat('EEEE').format(DateTime.now())}.
@@ -246,6 +278,7 @@ Your responses must strictly adhere to the following format:
 **Response Modes:**
 1. **Clarifying Mode**: Start your response with `mode=clarifying` followed by the clarification question.
    Example: `mode=clarifying What is the title of the event and what time is the event?`
+   use this mode until you have the necessary information to execute the command then ask for confirmation before executing the command by switching to code_output mode.
 
 2. **Code Output Mode**: Start your response with `mode=code_output` followed by a stack of commands in the format:
    `commandsToBeExecutedStack={command1|||command2|||...}` \n Reasoning: your reasoning here.
@@ -255,17 +288,17 @@ Your responses must strictly adhere to the following format:
           2. updateEvent(String eventId,{String? title,DateTime? startTime,DateTime? endTime,String? description,String? location,String? colorId})
           3. deleteEvent(String eventId)
           for refrence colorOptions = {"1": "Lavender","2": "Sage","3": "Grape","4": "Flamingo","5": "Banana","6": "Tangerine","7": "Peacock","8": "Graphite", "9": "Blueberry", "10": "Basil", "11": "Tomato",}
-
+          before using this mode you should always ask for confirmation before executing any command in clarifying mode.
+          then in the next interaction you should switch to code_output mode to execute the command stack.
 
 3. **Generic Response Mode**:Start your response with `mode=generic` followed by the response text. use this when you don't need to execute any commands for example when the user asks for information regrading the calendar data you already have.
    Example: `User: what do I have on my calendar tommorow?` Response: `mode=generic tommorow you have Event1 at 12:00 PM and Event2 at 2:00 PM`
-   Example: `mode=generic Sure, I can help you with that.` 
+   Example: `mode=generic Sure, I can help you with that.`
    in this mode you provide helpful insight like alerting when the user is trying to add an event that conflicts with an existing event.
    or when the user is trying to update an event that does not exist.
    or when the user has two events that conflict with each other.
    example: what do I have on my calendar tommorow? Response: mode=generic tommorow you have Event1 at 12:00 PM till 1:00 PM and Event2 at 12:30 PM till 1:30 PM ,be aware that Event1 and Event2 overlap each other, would you like to update any of them?.
    you have more freedom in this mode to provide any helpful information to the user be creative.
-
 
 **Important Rules:**
 - Do not include prefixes like "Assistant:" in your response.
@@ -280,6 +313,7 @@ Your responses must strictly adhere to the following format:
 - always responds in a neat and organised way that is best for text to speech.
 - always add a confirmation step before executing any command,in this step explain to the user what you are about to do fully and ask for confirmation.
 -if the user doent have any event for a timeslot in the calendar it means he is free at that time.
+-before executing any command always ask for confirmation with the summery of the change before executing the command.
 
 Respond strictly as instructed.
 The minimum info needed to add an event is the title and start time; the end time defaults to 1 hour after the start time.
@@ -287,88 +321,22 @@ The minimum info needed to update an event is the event ID.
 Use the event IDs from the calendar data above to update or delete events.
 
  '''),
-        apiKey: apiKey,
       );
-
-      print("Initializing Generative Model...");
+      print("Chat messages before initializing chat: ${chatMessages}");
       final conversationHistory = chatMessages.map((message) {
-        print(
-            "Chat Message Role: ${message['role']} Content: ${message['content']}");
-        return Content.text(
-          '${message['role'] == 'user' ? 'User' : 'model'}: ${message['content']}',
-        );
+        return Content.text('${message['role']}: ${message['content']}');
       }).toList();
 
-      conversationHistory.add(Content.text('User: $userQuery'));
-      print("Conversation History Sent to AI:\n$conversationHistory");
+      _chat = model.startChat(history: conversationHistory);
 
-      print("Sending Request to Gemini AI...");
-      final response = await model.generateContent(safetySettings: [
-        SafetySetting(HarmCategory.sexuallyExplicit, HarmBlockThreshold.none),
-        SafetySetting(HarmCategory.dangerousContent, HarmBlockThreshold.none),
-        SafetySetting(HarmCategory.hateSpeech, HarmBlockThreshold.none),
-        SafetySetting(HarmCategory.harassment, HarmBlockThreshold.none),
-      ], [
-        Content.text(
-          '''You are an AI assistant with access to the user's calendar for the next two weeks.
-today = ${DateFormat('yyyy-MM-dd').format(DateTime.now())} and the day is ${DateFormat('EEEE').format(DateTime.now())}.
-Your responses must strictly adhere to the following format:
-
-**Response Modes:**
-1. **Clarifying Mode**: Start your response with `mode=clarifying` followed by the clarification question.
-   Example: `mode=clarifying What is the title of the event and what time is the event?`
-
-2. **Code Output Mode**: Start your response with `mode=code_output` followed by a stack of commands in the format:
-   `commandsToBeExecutedStack={command1|||command2|||...}` \n Reasoning: your reasoning here.
-   Example: `mode=code_output commandsToBeExecutedStack={addEvent(title: "Lunch", startTime: "2025-01-02T12:00:00.000", endTime: "2025-01-02T13:00:00.000")} \n reasoning: The user wants to add a lunch event on January 2, 2025, from 12:00 PM to 1:00 PM.`
-   You have access to these functions to manipulate the calendar: and only these! no more no less.
-          1. addEvent(String title, DateTime startTime, {DateTime? endTime,String? description,String? location,String? colorId})
-          2. updateEvent(String eventId,{String? title,DateTime? startTime,DateTime? endTime,String? description,String? location,String? colorId})
-          3. deleteEvent(String eventId)
-          for refrence colorOptions = {"1": "Lavender","2": "Sage","3": "Grape","4": "Flamingo","5": "Banana","6": "Tangerine","7": "Peacock","8": "Graphite", "9": "Blueberry", "10": "Basil", "11": "Tomato",}
-
-3. **Generic Response Mode**:Start your response with `mode=generic` followed by the response text. use this when you don't need to execute any commands for example when the user asks for information regrading the calendar data you already have.
-   Example: `User: what do I have on my calendar tommorow?` Response: `mode=generic tommorow you have Event1 at 12:00 PM and Event2 at 2:00 PM`
-   Example: `mode=generic Sure, I can help you with that.` 
-   in this mode you provide helpful insight like alerting when the user is trying to add an event that conflicts with an existing event.
-   or when the user is trying to update an event that does not exist.
-   or when the user has two events that conflict with each other.
-   example: what do I have on my calendar tommorow? Response: mode=generic tommorow you have Event1 at 12:00 PM till 1:00 PM and Event2 at 12:30 PM till 1:30 PM ,be aware that Event1 and Event2 overlap each other, would you like to update any of them?.
-   you have more freedom in this mode to provide any helpful information to the user be creative.
-
-
-**Important Rules:**
-- Do not include prefixes like "Assistant:" in your response.
-- Do not add any explanation, context, or extra text.
-- Your response must only contain the mode and the commands or questions as specified above.
-- use the event IDs from the calendar data you have in the conversation history to update or delete events.
-- when the user says "it" or "that" in the response you should refer to the last event mentioned in the conversation history.
-- you never mention event id to the user, only use them to update or delete events.
-- when the user asks for information regarding the calendar data you already have, respond in generic mode.
-- when the user asks to add an event that conflicts with an existing event, respond in generic mode.
-- if you come accross anything that is not english text,translare it to english before responding and respond with the english translation.
-- always responds in a neat and organised way that is best for text to speech.
-- always add a confirmation step before executing any command,in this step explain to the user what you are about to do fully and ask for confirmation.
-- if the user doent have any event for a timeslot in the calendar it means he is free at that time.
-Respond strictly as instructed.
-The minimum info needed to add an event is the title and start time; the end time defaults to 1 hour after the start time.
-The minimum info needed to update an event is the event ID.
-Use the event IDs from the calendar data above to update or delete events.
-\n 
-    
-Here is the user's calendar data:
-$formattedEvents \n
-The user query: $userQuery
-      ''',
-        ),
-        ...conversationHistory,
-      ]);
-
-      print("AI Response: ${response.text}");
-      return response.text ?? "Error: No response received.";
+      _isChatInitialized = true;
+      print("Gemini Chat initialized successfully.");
+      print("Initialized chat with history: ${conversationHistory}");
     } catch (e) {
-      print("Error querying Gemini AI: $e");
-      return "Error: $e";
+      print("Error initializing Gemini Chat: $e");
+      setState(() {
+        errorMessage = "Failed to initialize Gemini Chat: $e";
+      });
     }
   }
 
@@ -425,6 +393,45 @@ The user query: $userQuery
           print("Missing eventId for deleteEvent.");
         }
       }
+    }
+  }
+
+  Future<void> saveChatHistory() async {
+    print("Attempting to save chat history: $chatMessages");
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonMessages = jsonEncode(chatMessages.map((entry) {
+        return entry
+            .map((key, value) => MapEntry(key.toString(), value.toString()));
+      }).toList());
+      await prefs.setString('chat_history', jsonMessages);
+      print("Chat history saved successfully: $jsonMessages");
+    } catch (e) {
+      print("Error saving chat history: $e");
+    }
+  }
+
+  final logger = Logger();
+
+  Future<void> loadChatHistory() async {
+    logger.i("Attempting to load chat history...");
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonMessages = prefs.getString('chat_history');
+      if (jsonMessages != null) {
+        logger.i("Raw JSON Loaded: $jsonMessages");
+        final dynamicMessages = jsonDecode(jsonMessages) as List;
+        setState(() {
+          chatMessages = dynamicMessages
+              .map((message) => Map<String, String>.from(message))
+              .toList();
+        });
+        logger.i("Loaded chat history: $chatMessages");
+      } else {
+        logger.i("No chat history found.");
+      }
+    } catch (e) {
+      logger.e("Error loading chat history: $e");
     }
   }
 
@@ -513,6 +520,7 @@ The user query: $userQuery
       });
       _speak(cleanResponse(response));
     }
+    saveChatHistory(); // Save chat history after receiving a response
     _scrollToBottom(); // Scroll to the latest message
   }
 
