@@ -29,7 +29,7 @@ class CalendarScreen extends StatefulWidget {
 }
 
 class _CalendarScreenState extends State<CalendarScreen> {
-  List<calendar.Event> twoWeeksEvents = [];
+  List<calendar.Event> upcomingEvents = [];
   List<Map<String, String>> chatMessages = [];
   final queryController = TextEditingController();
   String? errorMessage;
@@ -41,6 +41,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   final ScrollController _scrollController = ScrollController();
   late ChatSession _chat;
   bool _isChatInitialized = false;
+  final int daysOfAccess = 60;
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -160,7 +161,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
       calendarApi = calendar.CalendarApi(authClient);
       print("Calendar API initialized successfully.");
-      await fetchTwoWeeksEvents();
+      await fetchUpcomingEvents();
     } catch (e) {
       print("Error initializing Calendar API: $e");
       setState(() {
@@ -169,12 +170,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
   }
 
-  Future<List<calendar.Event>> fetchEventsForTwoWeeks() async {
-    print("Fetching events for the next two weeks starting from yesterday...");
+  Future<List<calendar.Event>> fetchEventsForUpcomingPeriod() async {
+    print("Fetching events for the time period...");
     try {
       final now = DateTime.now().toUtc();
       final startOfRange = now.subtract(Duration(days: 1));
-      final endOfRange = startOfRange.add(Duration(days: 14));
+      final endOfRange = startOfRange.add(Duration(days: daysOfAccess));
 
       final eventsResult = await calendarApi.events.list(
         'mousatams@gmail.com',
@@ -192,15 +193,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
           }).toList() ??
           [];
     } catch (e) {
-      print("Error fetching events for two weeks: $e");
+      print("Error fetching events the time period: $e");
       return [];
     }
   }
 
-  Future<void> fetchTwoWeeksEvents() async {
-    final events = await fetchEventsForTwoWeeks();
+  Future<void> fetchUpcomingEvents() async {
+    final events = await fetchEventsForUpcomingPeriod();
     setState(() {
-      twoWeeksEvents = events;
+      upcomingEvents = events;
     });
   }
 
@@ -231,20 +232,45 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
 
     print("Querying Gemini AI with User Query: $userQuery");
-    final formattedEvents = formatEventsForGPT(twoWeeksEvents);
+    final formattedEvents = formatEventsForGPT(upcomingEvents);
     print("Formatted Events for AI Input:\n$formattedEvents");
 
-    try {
-      final content = Content.text(
-          '''You are an AI assistant with access to the user's calendar for the next two weeks.
-today = ${DateFormat('yyyy-MM-dd').format(DateTime.now())} and the day is ${DateFormat('EEEE').format(DateTime.now())}.
+    // Fetch free/busy data for the next period
+    final now = DateTime.now();
+    final end = now.add(Duration(days: daysOfAccess));
+    final busyPeriods = await fetchFreeBusyData(now, end);
+    final freePeriods = calculateFreePeriods(busyPeriods, now, end);
 
-    
+    // Format free and busy periods for GPT
+    final freeBusyData = StringBuffer();
+    freeBusyData.writeln("Busy periods:");
+    for (var period in busyPeriods) {
+      freeBusyData.writeln(
+          "- ${DateTime.parse(period['start']).toLocal()} to ${DateTime.parse(period['end']).toLocal()}");
+    }
+    freeBusyData.writeln("Free periods:");
+    for (var period in freePeriods) {
+      freeBusyData.writeln("- ${period['start']} to ${period['end']}");
+    }
+
+    // Include free/busy data in the prompt
+    final prompt = '''
+You are an AI assistant with access to the user's calendar and free/busy data for the $daysOfAccess calendar days in israel.
+adhere to the system instruction and respond strictly as instructed.
+
+Today is ${DateFormat('yyyy-MM-dd').format(DateTime.now())} (${DateFormat('EEEE').format(DateTime.now())}).
+
 Here is the user's calendar data:
-$formattedEvents \n
-The user query: $userQuery
-      ''');
+$formattedEvents
 
+Here is the user's free/busy data:
+$freeBusyData
+
+The user query: $userQuery
+''';
+
+    try {
+      final content = Content.text(prompt);
       final response = await _chat.sendMessage(content);
       print("AI Response: ${response.text}");
       return response.text ?? "Error: No response received.";
@@ -570,7 +596,7 @@ Use the event IDs from the calendar data above to update or delete events.
 
     calendarApi.events.insert(event, 'mousatams@gmail.com').then((value) {
       print("Event added: ${value.summary}");
-      fetchTwoWeeksEvents();
+      fetchUpcomingEvents();
     }).catchError((error) {
       print("Error adding event: $error");
     });
@@ -598,7 +624,7 @@ Use the event IDs from the calendar data above to update or delete events.
           .update(event, 'mousatams@gmail.com', eventId)
           .then((value) {
         print("Event updated: ${value.summary}");
-        fetchTwoWeeksEvents();
+        fetchUpcomingEvents();
       }).catchError((error) {
         print("Error updating event: $error");
       });
@@ -611,7 +637,7 @@ Use the event IDs from the calendar data above to update or delete events.
     print("Deleting event: $eventId");
     calendarApi.events.delete('mousatams@gmail.com', eventId).then((_) {
       print("Event deleted: $eventId");
-      fetchTwoWeeksEvents();
+      fetchUpcomingEvents();
     });
   }
 
@@ -634,6 +660,71 @@ Use the event IDs from the calendar data above to update or delete events.
         ),
       ),
     );
+  }
+
+  Future<List<Map<String, dynamic>>> fetchFreeBusyData(
+      DateTime start, DateTime end) async {
+    print("Fetching FreeBusy data from $start to $end...");
+    try {
+      final request = calendar.FreeBusyRequest(
+        timeMin: start.toUtc(),
+        timeMax: end.toUtc(),
+        items: [
+          calendar.FreeBusyRequestItem(id: 'mousatams@gmail.com'),
+        ],
+      );
+
+      final response = await calendarApi.freebusy.query(request);
+
+      if (response.calendars != null &&
+          response.calendars!['mousatams@gmail.com']?.busy != null) {
+        final busyTimes = response.calendars!['mousatams@gmail.com']!.busy!;
+        print("FreeBusy Data: $busyTimes");
+
+        return busyTimes.map((period) {
+          return {
+            'start': period.start?.toIso8601String(),
+            'end': period.end?.toIso8601String(),
+          };
+        }).toList();
+      }
+      return [];
+    } catch (e) {
+      print("Error fetching FreeBusy data: $e");
+      return [];
+    }
+  }
+
+  List<Map<String, DateTime>> calculateFreePeriods(
+      List<Map<String, dynamic>> busyPeriods, DateTime start, DateTime end) {
+    busyPeriods.sort((a, b) =>
+        DateTime.parse(a['start']!).compareTo(DateTime.parse(b['start']!)));
+
+    List<Map<String, DateTime>> freePeriods = [];
+    DateTime currentStart = start;
+
+    for (final period in busyPeriods) {
+      DateTime busyStart = DateTime.parse(period['start']);
+      DateTime busyEnd = DateTime.parse(period['end']);
+
+      if (currentStart.isBefore(busyStart)) {
+        freePeriods.add({
+          'start': currentStart,
+          'end': busyStart,
+        });
+      }
+
+      currentStart = busyEnd.isAfter(currentStart) ? busyEnd : currentStart;
+    }
+
+    if (currentStart.isBefore(end)) {
+      freePeriods.add({
+        'start': currentStart,
+        'end': end,
+      });
+    }
+
+    return freePeriods;
   }
 
   @override
