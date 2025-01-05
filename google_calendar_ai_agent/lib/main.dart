@@ -346,6 +346,7 @@ Respond strictly as instructed.
 The minimum info needed to add an event is the title and start time; the end time defaults to 1 hour after the start time.
 The minimum info needed to update an event is the event ID.
 Use the event IDs from the calendar data above to update or delete events.
+do not prefix your response with "model:" or anything similar other than the current mode.
 
  '''),
       );
