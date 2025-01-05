@@ -43,13 +43,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
   bool _isChatInitialized = false;
   final int daysOfAccess = 60;
 
-  void _scrollToBottom() {
+  Future<void> _scrollToBottom() async {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
-        _scrollController.animateTo(
+        _scrollController.jumpTo(
           _scrollController.position.maxScrollExtent,
-          duration: Duration(milliseconds: 300),
-          curve: Curves.easeOut,
+          // duration: Duration(milliseconds: 300),
+          // curve: Curves.easeOut,
         );
       }
     });
@@ -58,11 +58,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
   @override
   void initState() {
     super.initState();
+
     loadChatHistory().then((_) {
       initializeCalendarApi().then((_) {
         _initSpeechToText();
         initializeChat();
-      });
+      }).then((_) {});
     });
   }
 
@@ -126,7 +127,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
               autoPunctuation: true,
               enableHapticFeedback: true,
               cancelOnError: false,
-            ));
+              onDevice: false,
+            ),
+            pauseFor: Duration(seconds: 5));
       } else {
         print("The user has denied microphone permissions.");
       }
@@ -239,23 +242,23 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final now = DateTime.now();
     final end = now.add(Duration(days: daysOfAccess));
     final busyPeriods = await fetchFreeBusyData(now, end);
-    final freePeriods = calculateFreePeriods(busyPeriods, now, end);
 
     // Format free and busy periods for GPT
     final freeBusyData = StringBuffer();
     freeBusyData.writeln("Busy periods:");
     for (var period in busyPeriods) {
       freeBusyData.writeln(
-          "- ${DateTime.parse(period['start']).toLocal()} to ${DateTime.parse(period['end']).toLocal()}");
+          "- ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.parse(period['start']).toLocal())} to ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.parse(period['end']).toLocal())}");
     }
-    freeBusyData.writeln("Free periods:");
-    for (var period in freePeriods) {
-      freeBusyData.writeln("- ${period['start']} to ${period['end']}");
-    }
+
+    print("Formatted Free/Busy Data for AI Input:\n$freeBusyData");
+    // Log the formatted free/busy data
+    logger.log(
+        Level.info, "Formatted Free/Busy Data for AI Input:\n$freeBusyData");
 
     // Include free/busy data in the prompt
     final prompt = '''
-You are an AI assistant with access to the user's calendar and free/busy data for the $daysOfAccess calendar days in israel.
+You are an AI assistant with access to the user's calendar and free/busy data for the next $daysOfAccess calendar days in israel.
 adhere to the system instruction and respond strictly as instructed.
 
 Today is ${DateFormat('yyyy-MM-dd').format(DateTime.now())} (${DateFormat('EEEE').format(DateTime.now())}).
@@ -288,16 +291,14 @@ The user query: $userQuery
       )['api_key'];
 
       final model = GenerativeModel(
-        model: 'gemini-1.5-flash',
+        model: 'gemini-2.0-flash-exp',
         apiKey: apiKey,
         generationConfig: GenerationConfig(
-          topK: 80,
-          topP: 0.9,
           temperature: 2,
           maxOutputTokens: 1000,
         ),
         systemInstruction: Content.system(
-            '''You are an AI assistant with access to the user's calendar for the next two weeks.
+            '''You are an AI assistant with access to the user's calendar for the next for the next $daysOfAccess calendar days in israel.
 today = ${DateFormat('yyyy-MM-dd').format(DateTime.now())} and the day is ${DateFormat('EEEE').format(DateTime.now())}.
 Your responses must strictly adhere to the following format:
 
@@ -509,7 +510,6 @@ Use the event IDs from the calendar data above to update or delete events.
     setState(() {
       chatMessages.add({'role': 'user', 'content': query});
     });
-    _scrollToBottom(); // Scroll to the latest message
 
     // Query GPT
     final response = await queryGeminiFlashWithCalendarData(query);
@@ -546,8 +546,8 @@ Use the event IDs from the calendar data above to update or delete events.
       });
       _speak(cleanResponse(response));
     }
+
     saveChatHistory(); // Save chat history after receiving a response
-    _scrollToBottom(); // Scroll to the latest message
   }
 
   Future<void> _speak(String text) async {
@@ -695,38 +695,6 @@ Use the event IDs from the calendar data above to update or delete events.
     }
   }
 
-  List<Map<String, DateTime>> calculateFreePeriods(
-      List<Map<String, dynamic>> busyPeriods, DateTime start, DateTime end) {
-    busyPeriods.sort((a, b) =>
-        DateTime.parse(a['start']!).compareTo(DateTime.parse(b['start']!)));
-
-    List<Map<String, DateTime>> freePeriods = [];
-    DateTime currentStart = start;
-
-    for (final period in busyPeriods) {
-      DateTime busyStart = DateTime.parse(period['start']);
-      DateTime busyEnd = DateTime.parse(period['end']);
-
-      if (currentStart.isBefore(busyStart)) {
-        freePeriods.add({
-          'start': currentStart,
-          'end': busyStart,
-        });
-      }
-
-      currentStart = busyEnd.isAfter(currentStart) ? busyEnd : currentStart;
-    }
-
-    if (currentStart.isBefore(end)) {
-      freePeriods.add({
-        'start': currentStart,
-        'end': end,
-      });
-    }
-
-    return freePeriods;
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -736,15 +704,7 @@ Use the event IDs from the calendar data above to update or delete events.
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController, // Attach the scroll controller
-              itemCount: chatMessages.length,
-              itemBuilder: (context, index) {
-                final message = chatMessages[index];
-                final isUser = message['role'] == 'user';
-                return _buildChatBubble(message['content'] ?? '', isUser);
-              },
-            ),
+            child: _buildChatBubbleandScrolltoButtom(),
           ),
           Container(
             padding: EdgeInsets.all(8),
@@ -829,6 +789,28 @@ Use the event IDs from the calendar data above to update or delete events.
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  _buildChatBubbleandScrolltoButtom() {
+    var toReturn = _buildChatListView();
+    _scrollToBottom();
+    return toReturn;
+  }
+
+  _buildChatListView() {
+    return Expanded(
+      child: ListView.builder(
+        scrollDirection: Axis.vertical,
+        reverse: false,
+        controller: _scrollController, // Attach the scroll controller
+        itemCount: chatMessages.length,
+        itemBuilder: (context, index) {
+          final message = chatMessages[index];
+          final isUser = message['role'] == 'user';
+          return _buildChatBubble(message['content'] ?? '', isUser);
+        },
       ),
     );
   }
