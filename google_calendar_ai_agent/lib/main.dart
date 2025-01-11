@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:googleapis/calendar/v3.dart' as calendar;
 import 'package:googleapis_auth/auth_io.dart';
@@ -8,8 +10,11 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:logger/logger.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
-import 'package:flutter_tts/flutter_tts.dart';
+import 'package:audioplayers/audioplayers.dart';
+import './GoogleAPIs/textToSpeechAPI.dart';
 import 'dart:io';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 
 void main() => runApp(CalendarApp());
 
@@ -36,7 +41,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
   String? errorMessage;
   late calendar.CalendarApi calendarApi;
   final stt.SpeechToText _speech = stt.SpeechToText();
-  final FlutterTts _flutterTts = FlutterTts();
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  final TextToSpeechAPI _textToSpeechAPI =
+      TextToSpeechAPI(); // Initialize TTS API
   bool _isListening = false;
   String _lastVoiceInput = '';
   final ScrollController _scrollController = ScrollController();
@@ -93,7 +100,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     } else {
       print("Starting Speech-to-Text...");
       // Stop TTS if it's speaking
-      await _flutterTts.stop();
+      _audioPlayer.stop();
 
       bool available = await _speech.initialize(
         onStatus: (status) {
@@ -135,17 +142,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
         print("The user has denied microphone permissions.");
       }
     }
-  }
-
-  void _initTextToSpeech() {
-    _flutterTts.setLanguage('en-US');
-    _flutterTts.setVolume(1.0);
-    _flutterTts.setSpeechRate(0.5);
-    _flutterTts.setPitch(1.0);
-    _flutterTts.setCompletionHandler(() {
-      print("TTS completed.");
-      _toggleListening(); // Automatically restart listening after speech
-    });
   }
 
   Future<void> initializeCalendarApi() async {
@@ -190,12 +186,50 @@ class _CalendarScreenState extends State<CalendarScreen> {
       );
 
       print("Fetched ${eventsResult.items?.length ?? 0} events.");
-      return eventsResult.items?.map((event) {
-            event.start?.dateTime = event.start?.dateTime?.toLocal();
-            event.end?.dateTime = event.end?.dateTime?.toLocal();
-            return event;
-          }).toList() ??
-          [];
+
+      const TranslateLanguage sourceLanguage = TranslateLanguage.hebrew;
+      const TranslateLanguage targetLanguage = TranslateLanguage.english;
+      final onDeviceTranslator = OnDeviceTranslator(
+        sourceLanguage: sourceLanguage,
+        targetLanguage: targetLanguage,
+      );
+
+      final nonLatinRegex =
+          RegExp(r'[^\x00-\x7F]'); // Regex to detect non-Latin characters
+
+      final List<calendar.Event> translatedEvents =
+          await Future.wait(eventsResult.items?.map((event) async {
+                String summary = event.summary ?? 'No Title';
+
+                // Remove all instances of [מוסא טמס]
+                summary = summary.replaceAllMapped(
+                    RegExp(r'\[מוסא טמס\]'), (match) => '');
+
+                // Translate non-Latin text
+                if (nonLatinRegex.hasMatch(summary)) {
+                  summary = await onDeviceTranslator.translateText(summary);
+                }
+                if (event.description != null &&
+                    nonLatinRegex.hasMatch(event.description!)) {
+                  event.description = await onDeviceTranslator
+                      .translateText(event.description!);
+                }
+                if (event.location != null &&
+                    nonLatinRegex.hasMatch(event.location!)) {
+                  event.location =
+                      await onDeviceTranslator.translateText(event.location!);
+                }
+
+                event.summary = summary;
+                event.start?.dateTime = event.start?.dateTime?.toLocal();
+                event.end?.dateTime = event.end?.dateTime?.toLocal();
+                return event;
+              }) ??
+              []);
+
+      onDeviceTranslator.close();
+
+      return translatedEvents;
     } catch (e) {
       print("Error fetching events the time period: $e");
       return [];
@@ -272,14 +306,28 @@ $freeBusyData
 
 The user query: $userQuery
 ''';
+    setState(() {
+      _isThinking = true;
+    });
 
     try {
       final content = Content.text(prompt);
       final response = await _chat.sendMessage(content);
       print("AI Response: ${response.text}");
-      await logToCsv(prompt, response.text ?? 'Error: No response received.');
-      return response.text ?? "Error: No response received.";
+      var toReturn = response.text ?? "Error: No response received.";
+      //remove all astrixs from the response
+      toReturn = toReturn.replaceAll(RegExp(r'\*'), '');
+      logToCsv(prompt, toReturn);
+      setState(() {
+        _isThinking = false;
+      });
+
+      return toReturn;
     } catch (e) {
+      setState(() {
+        _isThinking = false;
+      });
+
       print("Error querying Gemini AI: $e");
       return "Error: $e";
     }
@@ -364,7 +412,6 @@ Your responses must strictly adhere to the following format:
 - never mention event id to the user, only use them to update or delete events.
 - when the user asks for information regarding the calendar data you already have, respond in generic mode.
 - when the user asks to add an event that conflicts with an existing event, respond in generic mode.
-- if you come accross anything that is not english text,translare it to english before responding and respond with the english translation.
 - always responds in a neat and organised way that is best for text to speech.
 - always add a confirmation step before executing any command,in this step explain to the user what you are about to do fully and ask for confirmation.
 -if the user doent have any event for a timeslot in the calendar it means he is free at that time.
@@ -469,6 +516,8 @@ do not prefix your response with "model:" or anything similar other than the cur
 
   final logger = Logger();
 
+  bool _isThinking = false;
+
   Future<void> loadChatHistory() async {
     logger.i("Attempting to load chat history...");
     try {
@@ -559,15 +608,17 @@ do not prefix your response with "model:" or anything similar other than the cur
     } else if (response.startsWith('mode=code_output')) {
       final commandStack = extractCommandStack(response);
       executeCommandStack(commandStack);
+      var cleanedResponse = "Executed ${commandStack.length} commands!";
+      //log the original response to app logs
+      print("Code Execution: $response");
       setState(() {
         chatMessages.add({
           'role': 'model',
-          'content': response,
+          'content': cleanedResponse,
         });
       });
-      _speak(cleanResponse(response));
-      _speak(
-          "Executed ${commandStack.length} commands. Reason: ${cleanResponse(response).split('reasoning:').last.trim()}");
+      //  _speak(cleanResponse(response));
+      _speak("Executed ${commandStack.length} commands!");
     } else {
       // Generic response handling
       setState(() {
@@ -585,12 +636,15 @@ do not prefix your response with "model:" or anything similar other than the cur
       return; // Skip TTS if the mic is listening
     }
 
-    print("Speaking Text: $text");
-    await _flutterTts.speak(text);
-    _flutterTts.setCompletionHandler(() {
-      print("TTS completed, restarting mic...");
-      _toggleListening(); // Automatically restart listening
-    });
+    try {
+      final audioContent = await _textToSpeechAPI
+          .getSpeechAudio(text); // Fetch synthesized audio
+      final audioBytes = base64Decode(audioContent);
+      await _audioPlayer.play(BytesSource(audioBytes)); // Play audio
+      print("Playing audio for text: $text");
+    } catch (e) {
+      print("Error in TTS: $e");
+    }
   }
 
   List<String> extractCommandStack(String response) {
@@ -613,11 +667,18 @@ do not prefix your response with "model:" or anything similar other than the cur
       String? location,
       String? colorId}) {
     print("Adding event: $title");
+
+    // Set Israel timezone for start and end times
     final event = calendar.Event(
       summary: title,
-      start: calendar.EventDateTime(dateTime: startTime.toUtc()),
+      start: calendar.EventDateTime(
+        dateTime: startTime.toUtc(),
+        timeZone: 'Asia/Jerusalem', // Israel timezone
+      ),
       end: calendar.EventDateTime(
-          dateTime: (endTime ?? startTime.add(Duration(hours: 1))).toUtc()),
+        dateTime: (endTime ?? startTime.add(Duration(hours: 1))).toUtc(),
+        timeZone: 'Asia/Jerusalem', // Israel timezone
+      ),
       description: description,
       location: location,
       colorId: colorId, // Add the colorId
@@ -639,15 +700,24 @@ do not prefix your response with "model:" or anything similar other than the cur
       String? location,
       String? colorId}) {
     print("Updating event: $eventId");
+
     calendarApi.events.get('mousatams@gmail.com', eventId).then((event) {
       if (title != null) event.summary = title;
-      if (startTime != null)
-        event.start = calendar.EventDateTime(dateTime: startTime.toUtc());
-      if (endTime != null)
-        event.end = calendar.EventDateTime(dateTime: endTime.toUtc());
+      if (startTime != null) {
+        event.start = calendar.EventDateTime(
+          dateTime: startTime.toUtc(),
+          timeZone: 'Asia/Jerusalem', // Israel timezone
+        );
+      }
+      if (endTime != null) {
+        event.end = calendar.EventDateTime(
+          dateTime: endTime.toUtc(),
+          timeZone: 'Asia/Jerusalem', // Israel timezone
+        );
+      }
       if (description != null) event.description = description;
       if (location != null) event.location = location;
-      if (colorId != null) event.colorId = colorId; // Add the colorId
+      if (colorId != null) event.colorId = colorId;
 
       calendarApi.events
           .update(event, 'mousatams@gmail.com', eventId)
@@ -668,27 +738,6 @@ do not prefix your response with "model:" or anything similar other than the cur
       print("Event deleted: $eventId");
       fetchUpcomingEvents();
     });
-  }
-
-  Widget _buildChatBubble(String message, bool isUser) {
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: EdgeInsets.symmetric(vertical: 5, horizontal: 10),
-        padding: EdgeInsets.all(15),
-        decoration: BoxDecoration(
-          color: isUser ? Colors.blue[300] : Colors.grey[300],
-          borderRadius: BorderRadius.circular(15),
-        ),
-        child: Text(
-          message,
-          style: TextStyle(
-            fontSize: 16,
-            color: isUser ? Colors.white : Colors.black87,
-          ),
-        ),
-      ),
-    );
   }
 
   Future<List<Map<String, dynamic>>> fetchFreeBusyData(
@@ -728,92 +777,141 @@ do not prefix your response with "model:" or anything similar other than the cur
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Center(child: Text('AI Calendar Assistant')),
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: _buildChatBubbleandScrolltoButtom(),
-          ),
-          Container(
-            padding: EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.grey[200],
-              boxShadow: [BoxShadow(blurRadius: 2, color: Colors.black26)],
+        title: Center(
+          child: Text(
+            'AI Calendar Assistant',
+            style: GoogleFonts.roboto(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
             ),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: queryController,
-                        decoration: InputDecoration(
-                          hintText: "Type a message...",
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                          contentPadding: EdgeInsets.symmetric(
-                            vertical: 10,
-                            horizontal: 20,
-                          ),
-                        ),
-                        onSubmitted: (value) {
-                          if (value.isNotEmpty) {
-                            handleUserQuery(value);
-                            queryController.clear();
-                          }
-                        },
-                      ),
+          ),
+        ),
+        elevation: 0,
+        //backgroundColor: Colors.transparent,
+      ),
+      extendBodyBehindAppBar: true,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.lightBlueAccent, Colors.limeAccent],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Column(
+          children: [
+            Expanded(
+              child: _buildChatBubbleandScrolltoButtom(),
+            ),
+            _buildInputSection(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInputSection() {
+    return Container(
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            blurRadius: 5,
+            color: Colors.black12,
+            offset: Offset(0, -2),
+          ),
+        ],
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: queryController,
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.grey[100],
+                    hintText: "Type a message...",
+                    hintStyle: TextStyle(color: Colors.grey),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(30),
+                      borderSide: BorderSide.none,
                     ),
-                    IconButton(
-                      icon: Icon(Icons.send, color: Colors.blue),
-                      onPressed: () {
-                        final text = queryController.text.trim();
-                        if (text.isNotEmpty) {
-                          handleUserQuery(text);
-                          queryController.clear();
-                        }
-                      },
+                    contentPadding: EdgeInsets.symmetric(
+                      vertical: 10,
+                      horizontal: 20,
                     ),
-                  ],
+                  ),
+                  onSubmitted: (value) {
+                    if (value.isNotEmpty) {
+                      handleUserQuery(value);
+                      queryController.clear();
+                    }
+                  },
                 ),
-                SizedBox(height: 10),
-                GestureDetector(
-                  onTap: _toggleListening,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      // Pulsating animation
-                      AnimatedOpacity(
-                        opacity: _isListening ? 1.0 : 0.0,
-                        duration: Duration(seconds: 1),
-                        child: Container(
-                          width: 100,
-                          height: 100,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.red.withOpacity(0.3),
-                          ),
-                        ),
+              ),
+              SizedBox(width: 8),
+              CircleAvatar(
+                backgroundColor: Colors.blue,
+                child: IconButton(
+                  icon: Icon(Icons.send, color: Colors.white),
+                  onPressed: () {
+                    final text = queryController.text.trim();
+                    if (text.isNotEmpty) {
+                      handleUserQuery(text);
+                      queryController.clear();
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 15),
+          GestureDetector(
+            onTap: _toggleListening,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                AnimatedOpacity(
+                  opacity: _isListening ? 1.0 : 0.0,
+                  duration: Duration(seconds: 1),
+                  child: Container(
+                    width: 110,
+                    height: 110,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          Colors.red.withOpacity(0.4),
+                          Colors.red.withOpacity(0.1),
+                        ],
                       ),
-                      Container(
-                        width: 200,
-                        height: 200,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _isListening ? Colors.red : Colors.grey,
-                        ),
-                        child: Icon(
-                          Icons.mic,
-                          color: Colors.white,
-                          size: 90,
-                        ),
+                    ),
+                  ),
+                ),
+                Container(
+                  width: 90,
+                  height: 90,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _isListening ? Colors.red : Colors.grey,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black26,
+                        blurRadius: 4,
+                        offset: Offset(0, 2),
                       ),
                     ],
                   ),
+                  child: Icon(
+                    Icons.mic,
+                    color: Colors.white,
+                    size: 50,
+                  ),
                 ),
-                SizedBox(height: 10),
               ],
             ),
           ),
@@ -833,13 +931,61 @@ do not prefix your response with "model:" or anything similar other than the cur
       child: ListView.builder(
         scrollDirection: Axis.vertical,
         reverse: false,
-        controller: _scrollController, // Attach the scroll controller
-        itemCount: chatMessages.length,
+        controller: _scrollController,
+        itemCount: _isThinking ? chatMessages.length + 1 : chatMessages.length,
         itemBuilder: (context, index) {
+          if (_isThinking && index == chatMessages.length) {
+            // Add "Thinking..." bubble at the end if _isThinking is true
+            return Row(children: [
+              _buildChatBubble('Thinking...', false),
+              CircularProgressIndicator()
+            ]);
+          }
+
           final message = chatMessages[index];
           final isUser = message['role'] == 'user';
           return _buildChatBubble(message['content'] ?? '', isUser);
         },
+      ),
+    );
+  }
+
+  Widget _buildChatBubble(String message, bool isUser) {
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding: EdgeInsets.all(12),
+        constraints: BoxConstraints(maxWidth: 300),
+        decoration: BoxDecoration(
+          gradient: isUser
+              ? LinearGradient(
+                  colors: [Colors.blueAccent, Colors.lightBlue],
+                )
+              : LinearGradient(
+                  colors: [Colors.grey[300]!, Colors.grey[200]!],
+                ),
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(15),
+            topRight: Radius.circular(15),
+            bottomLeft: isUser ? Radius.circular(15) : Radius.zero,
+            bottomRight: isUser ? Radius.zero : Radius.circular(15),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 4,
+              offset: Offset(2, 2),
+            ),
+          ],
+        ),
+        child: SelectableText(
+          message,
+          style: GoogleFonts.lato(
+            fontSize: 16,
+            color: isUser ? Colors.white : Colors.black87,
+          ),
+        ),
       ),
     );
   }
