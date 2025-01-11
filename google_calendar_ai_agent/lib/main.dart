@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:logger/logger.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'dart:io';
 
 void main() => runApp(CalendarApp());
 
@@ -276,10 +277,37 @@ The user query: $userQuery
       final content = Content.text(prompt);
       final response = await _chat.sendMessage(content);
       print("AI Response: ${response.text}");
+      await logToCsv(prompt, response.text ?? 'Error: No response received.');
       return response.text ?? "Error: No response received.";
     } catch (e) {
       print("Error querying Gemini AI: $e");
       return "Error: $e";
+    }
+  }
+
+  Future<void> logToCsv(String prompt, String response) async {
+    try {
+      // Get the application's document directory
+      final directory = Directory('/storage/emulated/0/Download');
+
+      final filePath = '${directory.path}/ai_logs.csv';
+
+      final file = File(filePath);
+
+      // Check if file exists, create and add headers if it doesn't
+      if (!await file.exists()) {
+        await file.writeAsString("Timestamp,Prompt,Response\n");
+      }
+
+      // Append the new log entry
+      final timestamp = DateTime.now().toIso8601String();
+      final csvLine =
+          '"$timestamp","${prompt.replaceAll('"', '""')}","${response.replaceAll('"', '""')}"\n';
+
+      await file.writeAsString(csvLine, mode: FileMode.append, flush: true);
+      print("Logged to CSV at: $filePath");
+    } catch (e) {
+      print("Error logging to CSV: $e");
     }
   }
 
