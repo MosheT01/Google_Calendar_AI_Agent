@@ -926,15 +926,23 @@ do not prefix your response with "model:" or anything similar other than the cur
     // Show loading indicator while the app initializes
     if (_isLoading) {
       return Scaffold(
+        backgroundColor: Color.fromARGB(255, 246, 110, 142),
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const CircularProgressIndicator(),
+              const CircularProgressIndicator(
+                color: Colors.white,
+                strokeWidth: 2,
+              ),
               const SizedBox(height: 20),
               Text(
                 _loadingMessages[_loadingMessageIndex],
-                style: GoogleFonts.lato(fontSize: 16),
+                style: GoogleFonts.lato(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
               ),
             ],
           ),
@@ -944,54 +952,83 @@ do not prefix your response with "model:" or anything similar other than the cur
 
     // Main chat screen
     return Scaffold(
-      // WhatsApp-like green app bar
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF008069), // WhatsApp green
-        title: const Row(
-          mainAxisAlignment: MainAxisAlignment.center, // Center the content
-          children: [
-            SizedBox(width: 30),
-            // Leading avatar (optional)
-            CircleAvatar(
-              backgroundImage: NetworkImage(
-                'https://www.iconarchive.com/download/i26941/noctuline/wall-e/EVE.ico',
-              ),
-              radius: 20,
-              backgroundColor: Color(0xFF008069),
+      // Pastel pink app bar with circular border
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(70.0),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFFFF7F9C), // a pastel/pink color
+            borderRadius: BorderRadius.only(
+              bottomLeft: Radius.circular(20),
+              bottomRight: Radius.circular(20),
             ),
-
-            SizedBox(width: 10),
-            // Chat or user name
-            Text(
-              "AI Assistant",
-              style: TextStyle(
-                color: Colors.white,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          PopupMenuButton<String>(
-            onSelected: (String selectedModel) {
-              _changeModel(selectedModel); // Change the model on selection
-            },
-            itemBuilder: (BuildContext context) => [
-              const PopupMenuItem(
-                  value: 'gemini-1.5-flash-8b',
-                  child: Text('Gemini 1.5 Flash 8B')),
-              const PopupMenuItem(
-                  value: 'gemini-1.5-flash', child: Text('Gemini 1.5 Flash')),
-              const PopupMenuItem(
-                  value: 'gemini-2.0-flash-exp',
-                  child: Text('Gemini 2.0 Flash Exp')),
-            ],
-            icon: const Icon(Icons.more_vert, color: Colors.white),
           ),
-        ],
+          child: AppBar(
+            backgroundColor:
+                Colors.transparent, // Make AppBar background transparent
+            forceMaterialTransparency: true,
+            bottomOpacity: 0.0,
+            elevation: 0, // remove shadow for a cleaner look
+            centerTitle: true,
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Leading avatar
+                const CircleAvatar(
+                  backgroundColor: Color(0xFFFF7F9C),
+                  backgroundImage: NetworkImage(
+                    'https://www.iconarchive.com/download/i26941/noctuline/wall-e/EVE.ico',
+                  ),
+                  radius: 20,
+                ),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Bella",
+                      style: GoogleFonts.lato(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                    Text(
+                      "Online",
+                      style: GoogleFonts.lato(
+                        fontSize: 14,
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              PopupMenuButton<String>(
+                onSelected: (String selectedModel) {
+                  _changeModel(selectedModel); // Change the model on selection
+                },
+                itemBuilder: (BuildContext context) => [
+                  const PopupMenuItem(
+                      value: 'gemini-1.5-flash-8b',
+                      child: Text('Gemini 1.5 Flash 8B')),
+                  const PopupMenuItem(
+                      value: 'gemini-1.5-flash',
+                      child: Text('Gemini 1.5 Flash')),
+                  const PopupMenuItem(
+                      value: 'gemini-2.0-flash-exp',
+                      child: Text('Gemini 2.0 Flash Exp')),
+                ],
+                icon: const Icon(Icons.more_vert, color: Colors.white),
+              ),
+            ],
+          ),
+        ),
       ),
 
-      // WhatsApp generally has a light grey background (#ECE5DD)
-      backgroundColor: const Color(0xFFECE5DD),
+      // Use a lighter pink/cream as the background
+      backgroundColor: const Color(0xFFFFF8F8),
 
       body: Column(
         children: [
@@ -1010,7 +1047,7 @@ do not prefix your response with "model:" or anything similar other than the cur
   // Builds the bottom input section
   Widget _buildInputSection() {
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       color: Colors.white,
       child: SafeArea(
         child: Row(
@@ -1019,20 +1056,20 @@ do not prefix your response with "model:" or anything similar other than the cur
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF0F0F0),
+                  color: const Color(0xFFF5F5F5),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(
-                    minHeight: 40.0, // Minimum height
-                    maxHeight: 150.0, // Maximum height
+                    minHeight: 40.0,
+                    maxHeight: 150.0,
                   ),
                   child: Scrollbar(
                     child: TextField(
                       controller: queryController,
-                      maxLines: null, // Allow multiple lines
+                      maxLines: null,
                       decoration: const InputDecoration(
-                        hintText: "Type a message",
+                        hintText: "Type a message...",
                         border: InputBorder.none,
                         contentPadding: EdgeInsets.symmetric(
                           vertical: 8,
@@ -1040,15 +1077,13 @@ do not prefix your response with "model:" or anything similar other than the cur
                         ),
                       ),
                       onChanged: (value) {
-                        setState(
-                            () {}); // Trigger rebuild to update button icon
+                        setState(() {}); // to update button icon
                       },
                       onSubmitted: (value) {
                         if (value.isNotEmpty) {
                           handleUserQuery(value);
                           queryController.clear();
-                          setState(
-                              () {}); // Trigger rebuild to update button icon
+                          setState(() {});
                         }
                       },
                     ),
@@ -1060,8 +1095,8 @@ do not prefix your response with "model:" or anything similar other than the cur
             // Microphone or send button
             if (_isListening)
               CircleAvatar(
-                radius: 30, // Bigger mic icon
-                backgroundColor: Colors.red, // Flashing red background
+                radius: 40,
+                backgroundColor: Colors.red,
                 child: IconButton(
                   icon: const Icon(Icons.mic, color: Colors.white),
                   onPressed: _toggleListening,
@@ -1069,8 +1104,8 @@ do not prefix your response with "model:" or anything similar other than the cur
               )
             else
               CircleAvatar(
-                radius: 20,
-                backgroundColor: const Color(0xFF008069),
+                radius: 22,
+                backgroundColor: const Color(0xFFFF7F9C),
                 child: IconButton(
                   icon: Icon(
                     queryController.text.trim().isEmpty
@@ -1083,6 +1118,7 @@ do not prefix your response with "model:" or anything similar other than the cur
                     if (text.isNotEmpty) {
                       handleUserQuery(text);
                       queryController.clear();
+                      setState(() {});
                     } else {
                       _toggleListening();
                     }
@@ -1107,14 +1143,19 @@ do not prefix your response with "model:" or anything similar other than the cur
     return ListView.builder(
       controller: _scrollController,
       itemCount: _isThinking ? chatMessages.length + 1 : chatMessages.length,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       itemBuilder: (context, index) {
         if (_isThinking && index == chatMessages.length) {
           // Add "Thinking..." bubble at the end if _isThinking is true
           return Row(
+            mainAxisAlignment: MainAxisAlignment.start,
             children: [
               _buildChatBubble('Thinking...', false),
               const SizedBox(width: 8),
-              const CircularProgressIndicator()
+              const CircularProgressIndicator(
+                color: Colors.red,
+                strokeWidth: 2,
+              ),
             ],
           );
         }
@@ -1127,36 +1168,33 @@ do not prefix your response with "model:" or anything similar other than the cur
 
   // Single chat bubble
   Widget _buildChatBubble(String message, bool isUser) {
-    // Typical WhatsApp colors:
-    //   - User bubble: #DCF8C6 (light green)
-    //   - Others bubble: #FFFFFF (white)
-    //
-    // Also adjusting the border radius to mimic WhatsApp style
+    // Adjust the colors to pink for user and white for assistant
+    const Color userBubbleColor = Color(0xFFFFDEE2); // pinkish
+    final Color assistantBubbleColor = Colors.grey.shade200; // white
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        margin: const EdgeInsets.symmetric(vertical: 4),
         padding: const EdgeInsets.all(12),
-        constraints:
-            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
         decoration: BoxDecoration(
-          color: isUser
-              ? const Color(0xFFDCF8C6) // Light green bubble
-              : Colors.white, // White bubble
+          color: isUser ? userBubbleColor : assistantBubbleColor,
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(12),
-            topRight: const Radius.circular(12),
-            bottomLeft: isUser ? const Radius.circular(12) : Radius.zero,
-            bottomRight: isUser ? Radius.zero : const Radius.circular(12),
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: isUser ? const Radius.circular(16) : Radius.zero,
+            bottomRight: isUser ? Radius.zero : const Radius.circular(16),
           ),
         ),
         child: SelectableText(
           message,
           style: GoogleFonts.lato(
-            fontSize: 18,
-            color: Colors.black,
+            fontSize: 16,
+            color: Colors.black87,
             fontWeight: FontWeight.w500,
-            height: 1.4,
+            height: 1.3,
           ),
           textAlign: TextAlign.left, // Ensures proper alignment for paragraphs
         ),
