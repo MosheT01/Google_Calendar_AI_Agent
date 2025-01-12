@@ -15,6 +15,7 @@ import './GoogleAPIs/textToSpeechAPI.dart';
 import 'dart:io';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_mlkit_translation/google_mlkit_translation.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() => runApp(CalendarApp());
 
@@ -50,6 +51,34 @@ class _CalendarScreenState extends State<CalendarScreen> {
   late ChatSession _chat;
   bool _isChatInitialized = false;
   final int daysOfAccess = 60;
+  String _currentModel = 'gemini-2.0-flash-exp'; // Default model
+
+  void _changeModel(String selectedModel) {
+    setState(() {
+      _currentModel = selectedModel;
+    });
+
+    // Save the selected model to shared preferences
+    saveDefaultModel(selectedModel);
+
+    // Reinitialize the Gemini Chat with the new model
+    initializeChat();
+    print("Changed model to: $_currentModel");
+  }
+
+  Future<void> loadDefaultModel() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _currentModel =
+          prefs.getString('default_model') ?? 'gemini-2.0-flash-exp';
+    });
+    print("Loaded default model: $_currentModel");
+  }
+
+  Future<void> saveDefaultModel(String model) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('default_model', model);
+  }
 
   Future<void> _scrollToBottom() async {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -66,7 +95,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   @override
   void initState() {
     super.initState();
-
+    loadDefaultModel(); // Load the default model from shared preferences
     loadChatHistory().then((_) {
       initializeCalendarApi().then((_) {
         _initSpeechToText();
@@ -317,6 +346,8 @@ The user query: $userQuery
       var toReturn = response.text ?? "Error: No response received.";
       //remove all astrixs from the response
       toReturn = toReturn.replaceAll(RegExp(r'\*'), '');
+      toReturn = toReturn.replaceAll(RegExp(r'(?<!\n)\.\s'), '.\n\n');
+      toReturn = toReturn.replaceAll(RegExp(r'(?<!\n),\s'), ',\n');
       logToCsv(prompt, toReturn);
       setState(() {
         _isThinking = false;
@@ -335,11 +366,24 @@ The user query: $userQuery
 
   Future<void> logToCsv(String prompt, String response) async {
     try {
-      // Get the application's document directory
+      // Check and request storage or manage storage permission
+      if (await Permission.storage.isDenied ||
+          await Permission.manageExternalStorage.isDenied) {
+        var status = await Permission.manageExternalStorage.request();
+        if (!status.isGranted) {
+          print("Storage permission denied. Cannot log to CSV.");
+          return;
+        }
+      }
+
+      // Get the application's Download directory
       final directory = Directory('/storage/emulated/0/Download');
+      if (!await directory.exists()) {
+        print("Download directory not found. Cannot log to CSV.");
+        return;
+      }
 
       final filePath = '${directory.path}/ai_logs.csv';
-
       final file = File(filePath);
 
       // Check if file exists, create and add headers if it doesn't
@@ -367,7 +411,7 @@ The user query: $userQuery
       )['api_key'];
 
       final model = GenerativeModel(
-        model: 'gemini-2.0-flash-exp',
+        model: _currentModel,
         apiKey: apiKey,
         generationConfig: GenerationConfig(
           temperature: 2,
@@ -604,7 +648,7 @@ do not prefix your response with "model:" or anything similar other than the cur
         chatMessages.add({'role': 'model', 'content': cleanResponse(response)});
       });
 
-      _speak(cleanResponse(response));
+      _speak(cleanResponse(response).replaceAll('\n', ' '));
     } else if (response.startsWith('mode=code_output')) {
       final commandStack = extractCommandStack(response);
       executeCommandStack(commandStack);
@@ -624,7 +668,7 @@ do not prefix your response with "model:" or anything similar other than the cur
       setState(() {
         chatMessages.add({'role': 'model', 'content': cleanResponse(response)});
       });
-      _speak(cleanResponse(response));
+      _speak(cleanResponse(response).replaceAll('\n', ' '));
     }
 
     saveChatHistory(); // Save chat history after receiving a response
@@ -641,6 +685,9 @@ do not prefix your response with "model:" or anything similar other than the cur
           .getSpeechAudio(text); // Fetch synthesized audio
       final audioBytes = base64Decode(audioContent);
       await _audioPlayer.play(BytesSource(audioBytes)); // Play audio
+      _audioPlayer.onPlayerComplete.listen((event) {
+        _toggleListening(); // Toggle listening after audio is done playing
+      });
       print("Playing audio for text: $text");
     } catch (e) {
       print("Error in TTS: $e");
@@ -777,18 +824,31 @@ do not prefix your response with "model:" or anything similar other than the cur
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Center(
-          child: Text(
-            'AI Calendar Assistant',
-            style: GoogleFonts.roboto(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
+          actions: [
+            PopupMenuButton<String>(
+              onSelected: (String selectedModel) {
+                _changeModel(selectedModel); // Change the model on selection
+              },
+              itemBuilder: (BuildContext context) => [
+                PopupMenuItem(
+                    value: 'gemini-1.5-flash-8b',
+                    child: Text('Gemini 1.5 Flash 8B')),
+                PopupMenuItem(
+                    value: 'gemini-1.5-flash', child: Text('Gemini 1.5 Flash')),
+                PopupMenuItem(
+                    value: 'gemini-2.0-flash-exp',
+                    child: Text('Gemini 2.0 Flash Exp')),
+              ],
+              child: Icon(
+                Icons.settings,
+                size: 40,
+              ), // Icon for the menu
             ),
-          ),
-        ),
-        elevation: 0,
-        //backgroundColor: Colors.transparent,
-      ),
+          ],
+          elevation: 0,
+          forceMaterialTransparency: true,
+          backgroundColor:
+              const Color.fromARGB(0, 255, 255, 255).withOpacity(0)),
       extendBodyBehindAppBar: true,
       body: Container(
         decoration: BoxDecoration(
@@ -954,9 +1014,10 @@ do not prefix your response with "model:" or anything similar other than the cur
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        padding: EdgeInsets.all(12),
-        constraints: BoxConstraints(maxWidth: 300),
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.all(16),
+        constraints:
+            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
         decoration: BoxDecoration(
           gradient: isUser
               ? LinearGradient(
@@ -974,7 +1035,7 @@ do not prefix your response with "model:" or anything similar other than the cur
           boxShadow: [
             BoxShadow(
               color: Colors.black12,
-              blurRadius: 4,
+              blurRadius: 6,
               offset: Offset(2, 2),
             ),
           ],
@@ -984,7 +1045,9 @@ do not prefix your response with "model:" or anything similar other than the cur
           style: GoogleFonts.lato(
             fontSize: 16,
             color: isUser ? Colors.white : Colors.black87,
+            height: 1.5, // Line height for better readability
           ),
+          textAlign: TextAlign.left, // Ensures proper alignment for paragraphs
         ),
       ),
     );
