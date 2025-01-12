@@ -930,11 +930,11 @@ do not prefix your response with "model:" or anything similar other than the cur
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const CircularProgressIndicator(), // Loading spinner
+              const CircularProgressIndicator(),
               const SizedBox(height: 20),
               Text(
                 _loadingMessages[_loadingMessageIndex],
-                style: const TextStyle(fontSize: 16),
+                style: GoogleFonts.lato(fontSize: 16),
               ),
             ],
           ),
@@ -942,249 +942,221 @@ do not prefix your response with "model:" or anything similar other than the cur
       );
     }
 
-    // Show loading indicator while the app initializes
-    if (_isLoading) {
-      return Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(), // Loading spinner
-              const SizedBox(height: 20),
-              Text(
-                _loadingMessages[_loadingMessageIndex],
-                style: const TextStyle(fontSize: 16),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
+    // Main chat screen
     return Scaffold(
+      // WhatsApp-like green app bar
       appBar: AppBar(
-          actions: [
-            PopupMenuButton<String>(
-              onSelected: (String selectedModel) {
-                _changeModel(selectedModel); // Change the model on selection
-              },
-              itemBuilder: (BuildContext context) => [
-                const PopupMenuItem(
-                    value: 'gemini-1.5-flash-8b',
-                    child: Text('Gemini 1.5 Flash 8B')),
-                const PopupMenuItem(
-                    value: 'gemini-1.5-flash', child: Text('Gemini 1.5 Flash')),
-                const PopupMenuItem(
-                    value: 'gemini-2.0-flash-exp',
-                    child: Text('Gemini 2.0 Flash Exp')),
-              ],
-              child: const Icon(
-                Icons.settings,
-                size: 40,
-              ), // Icon for the menu
-            ),
-          ],
-          elevation: 0,
-          forceMaterialTransparency: true,
-          backgroundColor:
-              const Color.fromARGB(0, 255, 255, 255).withOpacity(0)),
-      extendBodyBehindAppBar: true,
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Colors.lightBlueAccent, Colors.limeAccent],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Column(
+        backgroundColor: const Color(0xFF008069), // WhatsApp green
+        title: const Row(
+          mainAxisAlignment: MainAxisAlignment.center, // Center the content
           children: [
-            Expanded(
-              child: _buildChatBubbleandScrolltoButtom(),
+            SizedBox(width: 30),
+            // Leading avatar (optional)
+            CircleAvatar(
+              backgroundImage: NetworkImage(
+                'https://www.iconarchive.com/download/i26941/noctuline/wall-e/EVE.ico',
+              ),
+              radius: 20,
+              backgroundColor: Color(0xFF008069),
             ),
-            _buildInputSection(),
+
+            SizedBox(width: 10),
+            // Chat or user name
+            Text(
+              "AI Assistant",
+              style: TextStyle(
+                color: Colors.white,
+              ),
+            ),
           ],
         ),
+        actions: [
+          PopupMenuButton<String>(
+            onSelected: (String selectedModel) {
+              _changeModel(selectedModel); // Change the model on selection
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem(
+                  value: 'gemini-1.5-flash-8b',
+                  child: Text('Gemini 1.5 Flash 8B')),
+              const PopupMenuItem(
+                  value: 'gemini-1.5-flash', child: Text('Gemini 1.5 Flash')),
+              const PopupMenuItem(
+                  value: 'gemini-2.0-flash-exp',
+                  child: Text('Gemini 2.0 Flash Exp')),
+            ],
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+          ),
+        ],
+      ),
+
+      // WhatsApp generally has a light grey background (#ECE5DD)
+      backgroundColor: const Color(0xFFECE5DD),
+
+      body: Column(
+        children: [
+          // The main chat list
+          Expanded(
+            child: _buildChatBubbleAndScrollToBottom(),
+          ),
+
+          // The input section at the bottom
+          _buildInputSection(),
+        ],
       ),
     );
   }
 
+  // Builds the bottom input section
   Widget _buildInputSection() {
     return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 5,
-            color: Colors.black12,
-            offset: Offset(0, -2),
-          ),
-        ],
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: queryController,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.grey[100],
-                    hintText: "Type a message...",
-                    hintStyle: const TextStyle(color: Colors.grey),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(30),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      vertical: 10,
-                      horizontal: 20,
+      padding: const EdgeInsets.all(8),
+      color: Colors.white,
+      child: SafeArea(
+        child: Row(
+          children: [
+            // The text input
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0F0F0),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    minHeight: 40.0, // Minimum height
+                    maxHeight: 150.0, // Maximum height
+                  ),
+                  child: Scrollbar(
+                    child: TextField(
+                      controller: queryController,
+                      maxLines: null, // Allow multiple lines
+                      decoration: const InputDecoration(
+                        hintText: "Type a message",
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(
+                          vertical: 8,
+                          horizontal: 16,
+                        ),
+                      ),
+                      onChanged: (value) {
+                        setState(
+                            () {}); // Trigger rebuild to update button icon
+                      },
+                      onSubmitted: (value) {
+                        if (value.isNotEmpty) {
+                          handleUserQuery(value);
+                          queryController.clear();
+                          setState(
+                              () {}); // Trigger rebuild to update button icon
+                        }
+                      },
                     ),
                   ),
-                  onSubmitted: (value) {
-                    if (value.isNotEmpty) {
-                      handleUserQuery(value);
-                      queryController.clear();
-                    }
-                  },
                 ),
               ),
-              const SizedBox(width: 8),
+            ),
+            const SizedBox(width: 8),
+            // Microphone or send button
+            if (_isListening)
               CircleAvatar(
-                backgroundColor: Colors.blue,
+                radius: 30, // Bigger mic icon
+                backgroundColor: Colors.red, // Flashing red background
                 child: IconButton(
-                  icon: const Icon(Icons.send, color: Colors.white),
+                  icon: const Icon(Icons.mic, color: Colors.white),
+                  onPressed: _toggleListening,
+                ),
+              )
+            else
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: const Color(0xFF008069),
+                child: IconButton(
+                  icon: Icon(
+                    queryController.text.trim().isEmpty
+                        ? Icons.mic
+                        : Icons.send,
+                    color: Colors.white,
+                  ),
                   onPressed: () {
                     final text = queryController.text.trim();
                     if (text.isNotEmpty) {
                       handleUserQuery(text);
                       queryController.clear();
+                    } else {
+                      _toggleListening();
                     }
                   },
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 15),
-          GestureDetector(
-            onTap: _toggleListening,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                AnimatedOpacity(
-                  opacity: _isListening ? 1.0 : 0.0,
-                  duration: const Duration(seconds: 1),
-                  child: Container(
-                    width: 110,
-                    height: 110,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [
-                          Colors.red.withOpacity(0.4),
-                          Colors.red.withOpacity(0.1),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                Container(
-                  width: 90,
-                  height: 90,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _isListening ? Colors.red : Colors.grey,
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 4,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.mic,
-                    color: Colors.white,
-                    size: 50,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  _buildChatBubbleandScrolltoButtom() {
-    var toReturn = _buildChatListView();
+  // Build the chat bubble list and scroll to bottom
+  Widget _buildChatBubbleAndScrollToBottom() {
+    final listView = _buildChatListView();
     _scrollToBottom();
-    return toReturn;
+    return listView;
   }
 
-  _buildChatListView() {
-    return Expanded(
-      child: ListView.builder(
-        scrollDirection: Axis.vertical,
-        reverse: false,
-        controller: _scrollController,
-        itemCount: _isThinking ? chatMessages.length + 1 : chatMessages.length,
-        itemBuilder: (context, index) {
-          if (_isThinking && index == chatMessages.length) {
-            // Add "Thinking..." bubble at the end if _isThinking is true
-            return Row(children: [
+  // List of chat bubbles
+  Widget _buildChatListView() {
+    return ListView.builder(
+      controller: _scrollController,
+      itemCount: _isThinking ? chatMessages.length + 1 : chatMessages.length,
+      itemBuilder: (context, index) {
+        if (_isThinking && index == chatMessages.length) {
+          // Add "Thinking..." bubble at the end if _isThinking is true
+          return Row(
+            children: [
               _buildChatBubble('Thinking...', false),
+              const SizedBox(width: 8),
               const CircularProgressIndicator()
-            ]);
-          }
-
-          final message = chatMessages[index];
-          final isUser = message['role'] == 'user';
-          return _buildChatBubble(message['content'] ?? '', isUser);
-        },
-      ),
+            ],
+          );
+        }
+        final message = chatMessages[index];
+        final isUser = message['role'] == 'user';
+        return _buildChatBubble(message['content'] ?? '', isUser);
+      },
     );
   }
 
+  // Single chat bubble
   Widget _buildChatBubble(String message, bool isUser) {
+    // Typical WhatsApp colors:
+    //   - User bubble: #DCF8C6 (light green)
+    //   - Others bubble: #FFFFFF (white)
+    //
+    // Also adjusting the border radius to mimic WhatsApp style
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        padding: const EdgeInsets.all(16),
+        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.all(12),
         constraints:
             BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
         decoration: BoxDecoration(
-          gradient: isUser
-              ? const LinearGradient(
-                  colors: [Colors.blueAccent, Colors.lightBlue],
-                )
-              : LinearGradient(
-                  colors: [Colors.grey[300]!, Colors.grey[200]!],
-                ),
+          color: isUser
+              ? const Color(0xFFDCF8C6) // Light green bubble
+              : Colors.white, // White bubble
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(15),
-            topRight: const Radius.circular(15),
-            bottomLeft: isUser ? const Radius.circular(15) : Radius.zero,
-            bottomRight: isUser ? Radius.zero : const Radius.circular(15),
+            topLeft: const Radius.circular(12),
+            topRight: const Radius.circular(12),
+            bottomLeft: isUser ? const Radius.circular(12) : Radius.zero,
+            bottomRight: isUser ? Radius.zero : const Radius.circular(12),
           ),
-          boxShadow: const [
-            BoxShadow(
-              color: Colors.black12,
-              blurRadius: 6,
-              offset: Offset(2, 2),
-            ),
-          ],
         ),
         child: SelectableText(
           message,
           style: GoogleFonts.lato(
-            fontSize: 16,
-            color: isUser ? Colors.white : Colors.black87,
-            height: 1.5, // Line height for better readability
+            fontSize: 18,
+            color: Colors.black,
+            fontWeight: FontWeight.w500,
+            height: 1.4,
           ),
           textAlign: TextAlign.left, // Ensures proper alignment for paragraphs
         ),
