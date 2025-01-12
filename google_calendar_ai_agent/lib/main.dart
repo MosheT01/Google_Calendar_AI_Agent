@@ -1,6 +1,8 @@
+// ignore_for_file: avoid_print
+
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:googleapis/calendar/v3.dart' as calendar;
 import 'package:googleapis_auth/auth_io.dart';
@@ -12,25 +14,28 @@ import 'package:logger/logger.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:audioplayers/audioplayers.dart';
 import './GoogleAPIs/textToSpeechAPI.dart';
-import 'dart:io';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-void main() => runApp(CalendarApp());
+void main() => runApp(const CalendarApp());
 
 class CalendarApp extends StatelessWidget {
+  const CalendarApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'AI Calendar Assistant',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: CalendarScreen(),
+      home: const CalendarScreen(),
     );
   }
 }
 
 class CalendarScreen extends StatefulWidget {
+  const CalendarScreen({super.key});
+
   @override
   _CalendarScreenState createState() => _CalendarScreenState();
 }
@@ -52,6 +57,41 @@ class _CalendarScreenState extends State<CalendarScreen> {
   bool _isChatInitialized = false;
   final int daysOfAccess = 60;
   String _currentModel = 'gemini-2.0-flash-exp'; // Default model
+  bool _isLoading = true; // State to track loading status
+
+  @override
+  void initState() {
+    logToCsv('newSession', "newSession");
+    _startLoadingMessages();
+    super.initState();
+
+    // Start initialization
+    initializeApp();
+  }
+
+  Future<void> initializeApp() async {
+    try {
+      // Load default model
+      await loadDefaultModel();
+
+      // Perform other initializations
+      await loadChatHistory();
+      await initializeCalendarApi();
+      _initSpeechToText();
+      initializeChat();
+
+      // Set loading to false after initialization completes
+      setState(() {
+        _isLoading = false;
+      });
+    } catch (e) {
+      print("Error initializing app: $e");
+      setState(() {
+        _isLoading = false; // Stop loading even if an error occurs
+        errorMessage = "Failed to initialize the app. Please try again.";
+      });
+    }
+  }
 
   void _changeModel(String selectedModel) {
     setState(() {
@@ -89,18 +129,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
           // curve: Curves.easeOut,
         );
       }
-    });
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    loadDefaultModel(); // Load the default model from shared preferences
-    loadChatHistory().then((_) {
-      initializeCalendarApi().then((_) {
-        _initSpeechToText();
-        initializeChat();
-      }).then((_) {});
     });
   }
 
@@ -166,7 +194,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               cancelOnError: false,
               onDevice: false,
             ),
-            pauseFor: Duration(seconds: 5));
+            pauseFor: const Duration(seconds: 5));
       } else {
         print("The user has denied microphone permissions.");
       }
@@ -203,7 +231,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     print("Fetching events for the time period...");
     try {
       final now = DateTime.now().toUtc();
-      final startOfRange = now.subtract(Duration(days: 1));
+      final startOfRange = now.subtract(const Duration(days: 1));
       final endOfRange = startOfRange.add(Duration(days: daysOfAccess));
 
       final eventsResult = await calendarApi.events.list(
@@ -466,7 +494,7 @@ do not prefix your response with "model:" or anything similar other than the cur
 
  '''),
       );
-      print("Chat messages before initializing chat: ${chatMessages}");
+      print("Chat messages before initializing chat: $chatMessages");
       final conversationHistory = chatMessages.map((message) {
         return Content.text('${message['role']}: ${message['content']}');
       }).toList();
@@ -475,7 +503,7 @@ do not prefix your response with "model:" or anything similar other than the cur
 
       _isChatInitialized = true;
       print("Gemini Chat initialized successfully.");
-      print("Initialized chat with history: ${conversationHistory}");
+      print("Initialized chat with history: $conversationHistory");
     } catch (e) {
       print("Error initializing Gemini Chat: $e");
       setState(() {
@@ -640,7 +668,7 @@ do not prefix your response with "model:" or anything similar other than the cur
       toReturn = toReturn.replaceAll(RegExp(r'\*'), '');
       toReturn = toReturn.replaceAll(RegExp(r'(?<!\n)\.\s'), '.\n\n');
       toReturn = toReturn.replaceAll(RegExp(r'(?<!\n),\s'), ',\n');
-      return response.replaceFirst(RegExp(r'^mode=\w+\s*'), '').trim();
+      return toReturn.replaceFirst(RegExp(r'^mode=\w+\s*'), '').trim();
     }
 
     if (response.startsWith('mode=clarifying')) {
@@ -674,18 +702,57 @@ do not prefix your response with "model:" or anything similar other than the cur
     saveChatHistory(); // Save chat history after receiving a response
   }
 
+  String formatTextWithPeriodsForSpeech(String text) {
+    StringBuffer modifiedText = StringBuffer();
+    int charCount = 0; // Counter for characters in the current segment
+    bool hasPeriod = false; // Flag to check if the segment contains a period
+
+    for (int i = 0; i < text.length; i++) {
+      charCount++;
+
+      // Mark if the current character is a period
+      if (text[i] == '.') {
+        hasPeriod = true;
+      }
+
+      // Add a period before the nearest space if no period exists in 100 characters
+      if (charCount >= 100 && !hasPeriod && text[i] == ' ') {
+        modifiedText.write('.'); // Insert a period
+        modifiedText.write(' '); // Maintain proper spacing
+        hasPeriod = true; // Mark that a period has been added
+      }
+
+      // Add the current character to the buffer
+      modifiedText.write(text[i]);
+
+      // Reset counters and flags after processing 100 characters
+      if (charCount >= 100 && (text[i] == '.' || text[i] == ' ')) {
+        charCount = 0;
+        hasPeriod = false;
+      }
+    }
+
+    // Log old and new texts for debugging
+    print("Old Text: $text");
+    print("New Text: $modifiedText");
+
+    return modifiedText.toString();
+  }
+
   Future<void> _speak(String text) async {
     if (_isListening) {
       print("Mic is active, skipping TTS.");
       return; // Skip TTS if the mic is listening
     }
+    String modifiedText = formatTextWithPeriodsForSpeech(text);
 
     try {
       final audioContent = await _textToSpeechAPI
-          .getSpeechAudio(text); // Fetch synthesized audio
+          .getSpeechAudio(modifiedText.toString()); // Fetch synthesized audio
       final audioBytes = base64Decode(audioContent);
       await _audioPlayer.play(BytesSource(audioBytes)); // Play audio
-      _audioPlayer.onPlayerComplete.listen((event) {
+      _audioPlayer.onPlayerComplete.listen((event) async {
+        await Future.delayed(const Duration(milliseconds: 1500));
         _toggleListening(); // Toggle listening after audio is done playing
       });
       print("Playing audio for text: $text");
@@ -723,7 +790,7 @@ do not prefix your response with "model:" or anything similar other than the cur
         timeZone: 'Asia/Jerusalem', // Israel timezone
       ),
       end: calendar.EventDateTime(
-        dateTime: (endTime ?? startTime.add(Duration(hours: 1))).toUtc(),
+        dateTime: (endTime ?? startTime.add(const Duration(hours: 1))).toUtc(),
         timeZone: 'Asia/Jerusalem', // Israel timezone
       ),
       description: description,
@@ -820,8 +887,80 @@ do not prefix your response with "model:" or anything similar other than the cur
     }
   }
 
+  final _loadingMessages = [
+    "Initializing the app...",
+    "Loading the AI assistant...",
+    "Setting up the chat...",
+    "Loading the calendar data...",
+    "Almost there...",
+    "Preparing your schedule...",
+    "Fetching events...",
+    "Optimizing performance...",
+    "Finalizing setup...",
+    "Loading user preferences...",
+    "Syncing with Google Calendar...",
+    "Analyzing past events...",
+    "Setting up notifications...",
+    "Configuring voice recognition...",
+    "Loading language models...",
+    "Preparing translation services...",
+    "Initializing text-to-speech...",
+    "Setting up user interface...",
+    "Almost done...",
+  ];
+  var _loadingMessageIndex = 0;
+
+  void _startLoadingMessages() async {
+    while (_isLoading) {
+      await Future.delayed(const Duration(milliseconds: 750));
+      if (!_isLoading) break; // Stop updating if loading is complete
+      setState(() {
+        _loadingMessageIndex =
+            (_loadingMessageIndex + 1) % _loadingMessages.length;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Show loading indicator while the app initializes
+    if (_isLoading) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(), // Loading spinner
+              const SizedBox(height: 20),
+              Text(
+                _loadingMessages[_loadingMessageIndex],
+                style: const TextStyle(fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Show loading indicator while the app initializes
+    if (_isLoading) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(), // Loading spinner
+              const SizedBox(height: 20),
+              Text(
+                _loadingMessages[_loadingMessageIndex],
+                style: const TextStyle(fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
           actions: [
@@ -830,16 +969,16 @@ do not prefix your response with "model:" or anything similar other than the cur
                 _changeModel(selectedModel); // Change the model on selection
               },
               itemBuilder: (BuildContext context) => [
-                PopupMenuItem(
+                const PopupMenuItem(
                     value: 'gemini-1.5-flash-8b',
                     child: Text('Gemini 1.5 Flash 8B')),
-                PopupMenuItem(
+                const PopupMenuItem(
                     value: 'gemini-1.5-flash', child: Text('Gemini 1.5 Flash')),
-                PopupMenuItem(
+                const PopupMenuItem(
                     value: 'gemini-2.0-flash-exp',
                     child: Text('Gemini 2.0 Flash Exp')),
               ],
-              child: Icon(
+              child: const Icon(
                 Icons.settings,
                 size: 40,
               ), // Icon for the menu
@@ -851,7 +990,7 @@ do not prefix your response with "model:" or anything similar other than the cur
               const Color.fromARGB(0, 255, 255, 255).withOpacity(0)),
       extendBodyBehindAppBar: true,
       body: Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [Colors.lightBlueAccent, Colors.limeAccent],
             begin: Alignment.topLeft,
@@ -872,8 +1011,8 @@ do not prefix your response with "model:" or anything similar other than the cur
 
   Widget _buildInputSection() {
     return Container(
-      padding: EdgeInsets.all(12),
-      decoration: BoxDecoration(
+      padding: const EdgeInsets.all(12),
+      decoration: const BoxDecoration(
         color: Colors.white,
         boxShadow: [
           BoxShadow(
@@ -895,12 +1034,12 @@ do not prefix your response with "model:" or anything similar other than the cur
                     filled: true,
                     fillColor: Colors.grey[100],
                     hintText: "Type a message...",
-                    hintStyle: TextStyle(color: Colors.grey),
+                    hintStyle: const TextStyle(color: Colors.grey),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(30),
                       borderSide: BorderSide.none,
                     ),
-                    contentPadding: EdgeInsets.symmetric(
+                    contentPadding: const EdgeInsets.symmetric(
                       vertical: 10,
                       horizontal: 20,
                     ),
@@ -913,11 +1052,11 @@ do not prefix your response with "model:" or anything similar other than the cur
                   },
                 ),
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               CircleAvatar(
                 backgroundColor: Colors.blue,
                 child: IconButton(
-                  icon: Icon(Icons.send, color: Colors.white),
+                  icon: const Icon(Icons.send, color: Colors.white),
                   onPressed: () {
                     final text = queryController.text.trim();
                     if (text.isNotEmpty) {
@@ -929,7 +1068,7 @@ do not prefix your response with "model:" or anything similar other than the cur
               ),
             ],
           ),
-          SizedBox(height: 15),
+          const SizedBox(height: 15),
           GestureDetector(
             onTap: _toggleListening,
             child: Stack(
@@ -937,7 +1076,7 @@ do not prefix your response with "model:" or anything similar other than the cur
               children: [
                 AnimatedOpacity(
                   opacity: _isListening ? 1.0 : 0.0,
-                  duration: Duration(seconds: 1),
+                  duration: const Duration(seconds: 1),
                   child: Container(
                     width: 110,
                     height: 110,
@@ -958,7 +1097,7 @@ do not prefix your response with "model:" or anything similar other than the cur
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: _isListening ? Colors.red : Colors.grey,
-                    boxShadow: [
+                    boxShadow: const [
                       BoxShadow(
                         color: Colors.black26,
                         blurRadius: 4,
@@ -966,7 +1105,7 @@ do not prefix your response with "model:" or anything similar other than the cur
                       ),
                     ],
                   ),
-                  child: Icon(
+                  child: const Icon(
                     Icons.mic,
                     color: Colors.white,
                     size: 50,
@@ -998,7 +1137,7 @@ do not prefix your response with "model:" or anything similar other than the cur
             // Add "Thinking..." bubble at the end if _isThinking is true
             return Row(children: [
               _buildChatBubble('Thinking...', false),
-              CircularProgressIndicator()
+              const CircularProgressIndicator()
             ]);
           }
 
@@ -1020,19 +1159,19 @@ do not prefix your response with "model:" or anything similar other than the cur
             BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
         decoration: BoxDecoration(
           gradient: isUser
-              ? LinearGradient(
+              ? const LinearGradient(
                   colors: [Colors.blueAccent, Colors.lightBlue],
                 )
               : LinearGradient(
                   colors: [Colors.grey[300]!, Colors.grey[200]!],
                 ),
           borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(15),
-            topRight: Radius.circular(15),
-            bottomLeft: isUser ? Radius.circular(15) : Radius.zero,
-            bottomRight: isUser ? Radius.zero : Radius.circular(15),
+            topLeft: const Radius.circular(15),
+            topRight: const Radius.circular(15),
+            bottomLeft: isUser ? const Radius.circular(15) : Radius.zero,
+            bottomRight: isUser ? Radius.zero : const Radius.circular(15),
           ),
-          boxShadow: [
+          boxShadow: const [
             BoxShadow(
               color: Colors.black12,
               blurRadius: 6,
