@@ -344,10 +344,7 @@ The user query: $userQuery
       final response = await _chat.sendMessage(content);
       print("AI Response: ${response.text}");
       var toReturn = response.text ?? "Error: No response received.";
-      //remove all astrixs from the response
-      toReturn = toReturn.replaceAll(RegExp(r'\*'), '');
-      toReturn = toReturn.replaceAll(RegExp(r'(?<!\n)\.\s'), '.\n\n');
-      toReturn = toReturn.replaceAll(RegExp(r'(?<!\n),\s'), ',\n');
+
       logToCsv(prompt, toReturn);
       setState(() {
         _isThinking = false;
@@ -434,7 +431,7 @@ Your responses must strictly adhere to the following format:
           1. addEvent(String title, DateTime startTime, {DateTime? endTime,String? description,String? location,String? colorId})
           2. updateEvent(String eventId,{String? title,DateTime? startTime,DateTime? endTime,String? description,String? location,String? colorId})
           3. deleteEvent(String eventId)
-          for refrence colorOptions = {"1": "Lavender","2": "Sage","3": "Grape","4": "Flamingo","5": "Banana","6": "Tangerine","7": "Peacock","8": "Graphite", "9": "Blueberry", "10": "Basil", "11": "Tomato",}
+          for refrence colorOptions = {"1": "light purple","2": "light green","3": "purple","4": "tan","5": "yellow","6": "orange","7": "cyan","8": "gray", "9": "blue", "10": "dark green", "11": "red",}
           before using this mode you should always ask for confirmation before executing any command in clarifying mode.
           then in the next interaction you should switch to code_output mode to execute the command stack.
 
@@ -639,7 +636,10 @@ do not prefix your response with "model:" or anything similar other than the cur
     print("Received GPT Response: $response");
 
     String cleanResponse(String response) {
-      // Remove "mode=..." prefix from the response
+      var toReturn = response.replaceAll(RegExp(r'(\n)+'), '\n');
+      toReturn = toReturn.replaceAll(RegExp(r'\*'), '');
+      toReturn = toReturn.replaceAll(RegExp(r'(?<!\n)\.\s'), '.\n\n');
+      toReturn = toReturn.replaceAll(RegExp(r'(?<!\n),\s'), ',\n');
       return response.replaceFirst(RegExp(r'^mode=\w+\s*'), '').trim();
     }
 
