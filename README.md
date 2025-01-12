@@ -61,10 +61,13 @@ Beyond personal use, this app opens the door for businesses to:
 
 Imagine a world where your clients simply chat with your AI to book appointments or manage schedules—effortless, conversational, and efficient.
 
----## Demo Video
+---
 
-🎥 Check out the demo video to see the app in action:
-[AI Calendar Assistant Demo](https://www.youtube.com/watch?v=GhVEaJZW7uU)
+## Demo Video
+
+<a href="https://www.youtube.com/watch?v=GhVEaJZW7uU" target="_blank">
+    <img src="https://img.youtube.com/vi/GhVEaJZW7uU/0.jpg" alt="AI Calendar Assistant Demo on YouTube (5 Minutes)" width="300"/>
+</a>
 
 ---
 ## Disclaimer
