@@ -266,16 +266,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 if (nonLatinRegex.hasMatch(summary)) {
                   summary = await onDeviceTranslator.translateText(summary);
                 }
-                if (event.description != null &&
-                    nonLatinRegex.hasMatch(event.description!)) {
-                  event.description = await onDeviceTranslator
-                      .translateText(event.description!);
-                }
-                if (event.location != null &&
-                    nonLatinRegex.hasMatch(event.location!)) {
-                  event.location =
-                      await onDeviceTranslator.translateText(event.location!);
-                }
+                // if (event.description != null &&
+                //     nonLatinRegex.hasMatch(event.description!)) {
+                //   event.description = await onDeviceTranslator
+                //       .translateText(event.description!);
+                // }
+                // if (event.location != null &&
+                //     nonLatinRegex.hasMatch(event.location!)) {
+                //   event.location =
+                //       await onDeviceTranslator.translateText(event.location!);
+                // }
 
                 event.summary = summary;
                 event.start?.dateTime = event.start?.dateTime?.toLocal();
@@ -353,7 +353,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
 You are an AI assistant with access to the user's calendar and free/busy data for the next $daysOfAccess calendar days in israel.
 adhere to the system instruction and respond strictly as instructed.
 
-Today is ${DateFormat('yyyy-MM-dd').format(DateTime.now())} (${DateFormat('EEEE').format(DateTime.now())}).
+Today is ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())} (${DateFormat('EEEE').format(DateTime.now())}).
+
 
 Here is the user's calendar data:
 $formattedEvents
@@ -485,6 +486,8 @@ Your responses must strictly adhere to the following format:
 - always add a confirmation step before executing any command,in this step explain to the user what you are about to do fully and ask for confirmation.
 -if the user doent have any event for a timeslot in the calendar it means he is free at that time.
 -before executing any command always ask for confirmation with the summery of the change before executing the command.
+-dont over complicate the response, keep it simple and to the point.
+-dont ask for too many confirmations, only ask for confirmation when you are about to execute a command,and dont ask too many questions if you already have all the neccaesary information to execute the command.
 
 Respond strictly as instructed.
 The minimum info needed to add an event is the title and start time; the end time defaults to 1 hour after the start time.
@@ -753,7 +756,9 @@ do not prefix your response with "model:" or anything similar other than the cur
       await _audioPlayer.play(BytesSource(audioBytes)); // Play audio
       _audioPlayer.onPlayerComplete.listen((event) async {
         await Future.delayed(const Duration(milliseconds: 1500));
-        _toggleListening(); // Toggle listening after audio is done playing
+        if (!_isListening) {
+          _toggleListening();
+        }
       });
       print("Playing audio for text: $text");
     } catch (e) {
