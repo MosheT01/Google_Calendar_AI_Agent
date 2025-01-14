@@ -187,6 +187,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             setState(() => _lastVoiceInput = result.recognizedWords);
             if (result.finalResult) {
               print("Final Speech-to-Text Result: $_lastVoiceInput");
+              setState(() => _isListening = false);
               handleUserQuery(_lastVoiceInput);
             }
           },
