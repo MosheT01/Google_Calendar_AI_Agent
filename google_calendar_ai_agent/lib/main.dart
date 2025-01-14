@@ -152,52 +152,53 @@ class _CalendarScreenState extends State<CalendarScreen> {
   void _toggleListening() async {
     if (_isListening) {
       print("Stopping Speech-to-Text...");
-      _speech.stop();
+      await _speech
+          .stop(); // Use await to ensure it completes before proceeding
       setState(() => _isListening = false);
-    } else {
-      print("Starting Speech-to-Text...");
-      // Stop TTS if it's speaking
-      _audioPlayer.stop();
+      return; // Exit to avoid restarting
+    }
 
-      bool available = await _speech.initialize(
-        onStatus: (status) {
-          print("Speech-to-Text Status: $status");
-          if (status == "notListening") {
-            setState(() => _isListening = false);
-          }
-          if (status == "done") {
-            setState(() => _isListening = false);
-          }
-        },
-        onError: (error) {
-          print("Speech-to-Text Error: $error");
+    print("Starting Speech-to-Text...");
+    // Stop TTS if it's speaking
+    _audioPlayer.stop();
+
+    bool available = await _speech.initialize(
+      onStatus: (status) {
+        print("Speech-to-Text Status: $status");
+        if (status == "notListening") {
           setState(() => _isListening = false);
-        },
-      );
+        }
+        if (status == "done") {
+          setState(() => _isListening = false);
+        }
+      },
+      onError: (error) {
+        print("Speech-to-Text Error: $error");
+        setState(() => _isListening = false);
+      },
+    );
 
-      if (available) {
-        print("Speech-to-Text is available.");
-        setState(() => _isListening = true);
-        _speech.listen(
-            onResult: (result) {
-              print("Speech-to-Text Result: ${result.recognizedWords}");
-              setState(() => _lastVoiceInput = result.recognizedWords);
-              if (result.finalResult) {
-                print("Final Speech-to-Text Result: $_lastVoiceInput");
-                _toggleListening(); // Stop listening automatically
-                handleUserQuery(_lastVoiceInput);
-              }
-            },
-            listenOptions: stt.SpeechListenOptions(
-              autoPunctuation: true,
-              enableHapticFeedback: true,
-              cancelOnError: false,
-              onDevice: false,
-            ),
-            pauseFor: const Duration(seconds: 5));
-      } else {
-        print("The user has denied microphone permissions.");
-      }
+    if (available) {
+      print("Speech-to-Text is available.");
+      setState(() => _isListening = true);
+      _speech.listen(
+          onResult: (result) {
+            print("Speech-to-Text Result: ${result.recognizedWords}");
+            setState(() => _lastVoiceInput = result.recognizedWords);
+            if (result.finalResult) {
+              print("Final Speech-to-Text Result: $_lastVoiceInput");
+              handleUserQuery(_lastVoiceInput);
+            }
+          },
+          listenOptions: stt.SpeechListenOptions(
+            autoPunctuation: true,
+            enableHapticFeedback: true,
+            cancelOnError: false,
+            onDevice: false,
+          ),
+          pauseFor: const Duration(seconds: 5));
+    } else {
+      print("The user has denied microphone permissions.");
     }
   }
 
