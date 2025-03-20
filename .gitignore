@@ -29,3 +29,4 @@ google_calendar_ai_agent/assets/service_account.json
 google_calendar_ai_agent/assets/gemini_api_key.json
 google_calendar_ai_agent/lib/GoogleAPIs/
 
+google_calendar_ai_agent/android/app/.cxx/
