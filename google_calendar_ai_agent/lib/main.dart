@@ -375,6 +375,7 @@ The user query: $userQuery
       final response = await _chat.sendMessage(content);
       print("AI Response: ${response.text}");
       var toReturn = response.text ?? "Error: No response received.";
+      toReturn = toReturn.replaceAll('```', '');
 
       logToCsv(prompt, toReturn);
       setState(() {
@@ -933,7 +934,7 @@ do not prefix your response with "model:" or anything similar other than the cur
     // Show loading indicator while the app initializes
     if (_isLoading) {
       return Scaffold(
-        backgroundColor: Color.fromARGB(255, 246, 110, 142),
+        backgroundColor: const Color.fromARGB(255, 246, 110, 142),
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
