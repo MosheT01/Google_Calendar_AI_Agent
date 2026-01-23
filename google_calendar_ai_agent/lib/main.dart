@@ -56,7 +56,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   late ChatSession _chat;
   bool _isChatInitialized = false;
   final int daysOfAccess = 60;
-  String _currentModel = 'gemini-2.0-flash-exp'; // Default model
+  String _currentModel = 'gemini-2.5-flash'; // Default model - FREE on Free Tier
   bool _isLoading = true; // State to track loading status
 
   @override
@@ -110,7 +110,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _currentModel =
-          prefs.getString('default_model') ?? 'gemini-2.0-flash-exp';
+          prefs.getString('default_model') ?? 'gemini-2.5-flash';
     });
     print("Loaded default model: $_currentModel");
   }
@@ -1018,15 +1018,24 @@ do not prefix your response with "model:" or anything similar other than the cur
                   _changeModel(selectedModel); // Change the model on selection
                 },
                 itemBuilder: (BuildContext context) => [
+                  // FREE TIER AVAILABLE MODELS
                   const PopupMenuItem(
-                      value: 'gemini-1.5-flash-8b',
-                      child: Text('Gemini 1.5 Flash 8B')),
+                      value: 'gemini-2.5-flash',
+                      child: Text('⚡ Gemini 2.5 Flash [FREE] - Fast & Reliable')),
                   const PopupMenuItem(
-                      value: 'gemini-1.5-flash',
-                      child: Text('Gemini 1.5 Flash')),
+                      value: 'gemini-2.5-flash-lite',
+                      child: Text('💨 Gemini 2.5 Flash Lite [FREE] - Ultra Fast')),
+                  
+                  // PAID TIER ONLY MODELS
                   const PopupMenuItem(
-                      value: 'gemini-2.0-flash-exp',
-                      child: Text('Gemini 2.0 Flash Exp')),
+                      value: 'gemini-3-pro-preview',
+                      child: Text('💎 Gemini 3 Pro [PAID ONLY] - Most Intelligent')),
+                  const PopupMenuItem(
+                      value: 'gemini-3-flash-preview',
+                      child: Text('🚀 Gemini 3 Flash [PAID ONLY] - Most Balanced')),
+                  const PopupMenuItem(
+                      value: 'gemini-2.5-pro',
+                      child: Text('🧠 Gemini 2.5 Pro [PAID ONLY] - Advanced Thinking')),
                 ],
                 icon: const Icon(Icons.more_vert, color: Colors.white),
               ),
