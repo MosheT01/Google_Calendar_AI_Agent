@@ -17,6 +17,7 @@ import './GoogleAPIs/textToSpeechAPI.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_tts/flutter_tts.dart'; // Add this import
 
 void main() => runApp(const CalendarApp());
 
@@ -49,15 +50,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
   final stt.SpeechToText _speech = stt.SpeechToText();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final TextToSpeechAPI _textToSpeechAPI =
-      TextToSpeechAPI(); // Initialize TTS API
+      TextToSpeechAPI(); // Keep for fallback
+  late FlutterTts _flutterTts; // Add on-device TTS
   bool _isListening = false;
   String _lastVoiceInput = '';
   final ScrollController _scrollController = ScrollController();
   late ChatSession _chat;
   bool _isChatInitialized = false;
   final int daysOfAccess = 60;
-  String _currentModel = 'gemini-2.5-flash'; // Default model - FREE on Free Tier
+  String _currentModel =
+      'gemini-2.5-flash'; // Default model - FREE on Free Tier
   bool _isLoading = true; // State to track loading status
+  final bool _useOnDeviceTTS = true; // Toggle between on-device and cloud TTS
 
   @override
   void initState() {
@@ -65,8 +69,34 @@ class _CalendarScreenState extends State<CalendarScreen> {
     _startLoadingMessages();
     super.initState();
 
+    // Initialize FlutterTts
+    _flutterTts = FlutterTts();
+    _initializeTTS();
+
     // Start initialization
     initializeApp();
+  }
+
+  Future<void> _initializeTTS() async {
+    await _flutterTts.setLanguage("en-US");
+    await _flutterTts
+        .setSpeechRate(0.5); // ⚡ SLOWER: 0.5x speed (slower speech)
+    await _flutterTts.setVolume(0.8);
+    await _flutterTts.setPitch(1.0);
+
+    // Ensure TTS engine stays connected
+    await _flutterTts.awaitSpeakCompletion(true);
+
+    // Set completion callback
+    _flutterTts.setCompletionHandler(() async {
+      await Future.delayed(
+          const Duration(milliseconds: 100)); // ⚡ ULTRA FAST: Minimal delay
+      if (!_isListening) {
+        _toggleListening();
+      }
+    });
+
+    print("Flutter TTS initialized with speech rate: 0.5x");
   }
 
   Future<void> initializeApp() async {
@@ -109,8 +139,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   Future<void> loadDefaultModel() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _currentModel =
-          prefs.getString('default_model') ?? 'gemini-2.5-flash';
+      _currentModel = prefs.getString('default_model') ?? 'gemini-2.5-flash';
     });
     print("Loaded default model: $_currentModel");
   }
@@ -159,8 +188,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
 
     print("Starting Speech-to-Text...");
-    // Stop TTS if it's speaking
-    _audioPlayer.stop();
+    // Stop TTS if it's speaking (both flutter_tts and audio player)
+    await _flutterTts.stop(); // Stop on-device TTS
+    _audioPlayer.stop(); // Stop cloud TTS fallback
 
     bool available = await _speech.initialize(
       onStatus: (status) {
@@ -753,19 +783,36 @@ do not prefix your response with "model:" or anything similar other than the cur
     String modifiedText = formatTextWithPeriodsForSpeech(text);
 
     try {
-      final audioContent = await _textToSpeechAPI
-          .getSpeechAudio(modifiedText.toString()); // Fetch synthesized audio
-      final audioBytes = base64Decode(audioContent);
-      await _audioPlayer.play(BytesSource(audioBytes)); // Play audio
-      _audioPlayer.onPlayerComplete.listen((event) async {
-        await Future.delayed(const Duration(milliseconds: 1500));
-        if (!_isListening) {
-          _toggleListening();
-        }
-      });
-      print("Playing audio for text: $text");
+      if (_useOnDeviceTTS) {
+        // 🎤 SLOWER: On-device TTS with 0.5x speed for clarity
+        await _flutterTts.setSpeechRate(0.5); // Consistent 0.5x speed
+        await _flutterTts.awaitSpeakCompletion(true); // Ensure connection
+        await _flutterTts.speak(modifiedText);
+        print("🎤 SLOW TTS (0.5x): $text");
+      } else {
+        // Fallback to cloud TTS API
+        final audioContent = await _textToSpeechAPI
+            .getSpeechAudio(modifiedText.toString()); // Fetch synthesized audio
+        final audioBytes = base64Decode(audioContent);
+        await _audioPlayer.play(BytesSource(audioBytes)); // Play audio
+        _audioPlayer.onPlayerComplete.listen((event) async {
+          await Future.delayed(const Duration(milliseconds: 1500));
+          if (!_isListening) {
+            _toggleListening();
+          }
+        });
+        print("🐌 Cloud TTS: $text");
+      }
     } catch (e) {
-      print("Error in TTS: $e");
+      print("❌ Error in TTS: $e");
+      // Try to reinitialize TTS engine if it failed
+      try {
+        await _initializeTTS();
+        await _flutterTts.speak(modifiedText);
+        print("🔄 TTS reinitialized and speaking: $text");
+      } catch (reinitError) {
+        print("❌ Failed to reinitialize TTS: $reinitError");
+      }
     }
   }
 
@@ -1021,21 +1068,26 @@ do not prefix your response with "model:" or anything similar other than the cur
                   // FREE TIER AVAILABLE MODELS
                   const PopupMenuItem(
                       value: 'gemini-2.5-flash',
-                      child: Text('⚡ Gemini 2.5 Flash [FREE] - Fast & Reliable')),
+                      child:
+                          Text('⚡ Gemini 2.5 Flash [FREE] - Fast & Reliable')),
                   const PopupMenuItem(
                       value: 'gemini-2.5-flash-lite',
-                      child: Text('💨 Gemini 2.5 Flash Lite [FREE] - Ultra Fast')),
-                  
+                      child:
+                          Text('💨 Gemini 2.5 Flash Lite [FREE] - Ultra Fast')),
+
                   // PAID TIER ONLY MODELS
                   const PopupMenuItem(
                       value: 'gemini-3-pro-preview',
-                      child: Text('💎 Gemini 3 Pro [PAID ONLY] - Most Intelligent')),
+                      child: Text(
+                          '💎 Gemini 3 Pro [PAID ONLY] - Most Intelligent')),
                   const PopupMenuItem(
                       value: 'gemini-3-flash-preview',
-                      child: Text('🚀 Gemini 3 Flash [PAID ONLY] - Most Balanced')),
+                      child: Text(
+                          '🚀 Gemini 3 Flash [PAID ONLY] - Most Balanced')),
                   const PopupMenuItem(
                       value: 'gemini-2.5-pro',
-                      child: Text('🧠 Gemini 2.5 Pro [PAID ONLY] - Advanced Thinking')),
+                      child: Text(
+                          '🧠 Gemini 2.5 Pro [PAID ONLY] - Advanced Thinking')),
                 ],
                 icon: const Icon(Icons.more_vert, color: Colors.white),
               ),
