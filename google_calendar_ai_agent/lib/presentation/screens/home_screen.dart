@@ -37,10 +37,26 @@ class _HomeScreenState extends State<HomeScreen> {
     return names[model] ?? model;
   }
 
+  String _getTtsName(String engine) {
+    if (engine == 'cloud') {
+      return 'Cloud TTS';
+    }
+    return 'Device TTS';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<AppProvider>(
       builder: (context, provider, _) {
+        if (_queryController.text != provider.draftInput) {
+          _queryController.value = TextEditingValue(
+            text: provider.draftInput,
+            selection: TextSelection.collapsed(
+              offset: provider.draftInput.length,
+            ),
+          );
+        }
+
         if (provider.isLoading) {
           return LoadingScreen(
             message: provider.loadingMessages[provider.loadingMessageIndex],
@@ -68,11 +84,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     const CircleAvatar(
-                      backgroundColor: AppColors.primary,
-                      backgroundImage: NetworkImage(
-                        'https://www.iconarchive.com/download/i26941/noctuline/wall-e/EVE.ico',
+                      backgroundColor: Colors.white,
+                      radius: 22,
+                      child: CircleAvatar(
+                        radius: 20,
+                        backgroundImage: AssetImage(
+                          'assets/branding/bella_logo_1024.png',
+                        ),
                       ),
-                      radius: 20,
                     ),
                     const SizedBox(width: 12),
                     Column(
@@ -87,7 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         Text(
-                          "Online",
+                          "Calendar Agent",
                           style: GoogleFonts.lato(
                             fontSize: 14,
                             color: Colors.white70,
@@ -99,40 +118,93 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 actions: [
                   PopupMenuButton<String>(
-                    onSelected: (model) {
-                      provider.saveDefaultModel(model);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Model changed to ${_getModelName(model)}'),
-                          backgroundColor: AppColors.primary,
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
+                    onSelected: (selection) {
+                      if (selection.startsWith('model:')) {
+                        final model = selection.substring('model:'.length);
+                        provider.saveDefaultModel(model);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                                'Model changed to ${_getModelName(model)}'),
+                            backgroundColor: AppColors.primary,
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                        return;
+                      }
+
+                      if (selection.startsWith('tts:')) {
+                        final engine = selection.substring('tts:'.length);
+                        provider.saveTtsEngine(engine);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                                'Speech changed to ${_getTtsName(engine)}'),
+                            backgroundColor: AppColors.primary,
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      }
                     },
                     itemBuilder: (context) => [
                       const PopupMenuItem(
-                        value: 'gemini-2.5-flash',
-                        child: Text('⚡ Gemini 2.5 Flash'),
+                        enabled: false,
+                        value: '__header_model__',
+                        child: Text('Model'),
                       ),
-                      const PopupMenuItem(
-                        value: 'gemini-2.5-flash-lite',
-                        child: Text('💨 Gemini 2.5 Flash Lite'),
+                      PopupMenuItem(
+                        value: 'model:gemini-2.5-flash',
+                        child: Text(
+                          '${provider.currentModel == 'gemini-2.5-flash' ? '✓ ' : ''}⚡ Gemini 2.5 Flash',
+                        ),
                       ),
-                      const PopupMenuItem(
-                        value: 'gemini-3.1-pro-preview',
-                        child: Text('💎 Gemini 3.1 Pro'),
+                      PopupMenuItem(
+                        value: 'model:gemini-2.5-flash-lite',
+                        child: Text(
+                          '${provider.currentModel == 'gemini-2.5-flash-lite' ? '✓ ' : ''}💨 Gemini 2.5 Flash Lite',
+                        ),
                       ),
-                      const PopupMenuItem(
-                        value: 'gemini-3-flash-preview',
-                        child: Text('🚀 Gemini 3 Flash'),
+                      PopupMenuItem(
+                        value: 'model:gemini-3.1-pro-preview',
+                        child: Text(
+                          '${provider.currentModel == 'gemini-3.1-pro-preview' ? '✓ ' : ''}💎 Gemini 3.1 Pro',
+                        ),
                       ),
-                      const PopupMenuItem(
-                        value: 'gemini-3.1-flash-lite-preview',
-                        child: Text('📱 Gemini 3.1 Flash Lite'),
+                      PopupMenuItem(
+                        value: 'model:gemini-3-flash-preview',
+                        child: Text(
+                          '${provider.currentModel == 'gemini-3-flash-preview' ? '✓ ' : ''}🚀 Gemini 3 Flash',
+                        ),
                       ),
+                      PopupMenuItem(
+                        value: 'model:gemini-3.1-flash-lite-preview',
+                        child: Text(
+                          '${provider.currentModel == 'gemini-3.1-flash-lite-preview' ? '✓ ' : ''}📱 Gemini 3.1 Flash Lite',
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'model:gemini-2.5-pro',
+                        child: Text(
+                          '${provider.currentModel == 'gemini-2.5-pro' ? '✓ ' : ''}🧠 Gemini 2.5 Pro',
+                        ),
+                      ),
+                      const PopupMenuDivider(),
                       const PopupMenuItem(
-                        value: 'gemini-2.5-pro',
-                        child: Text('🧠 Gemini 2.5 Pro'),
+                        enabled: false,
+                        value: '__header_tts__',
+                        child: Text('Speech'),
+                      ),
+                      PopupMenuItem(
+                        value: 'tts:device',
+                        child: Text(
+                          '${provider.currentTtsEngine == 'device' ? '✓ ' : ''}🔊 Device TTS',
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'tts:cloud',
+                        child: Text(
+                          '${provider.currentTtsEngine == 'cloud' ? '✓ ' : ''}☁ Cloud TTS',
+                        ),
                       ),
                     ],
                     icon: const Icon(Icons.more_vert, color: Colors.white),
@@ -153,12 +225,17 @@ class _HomeScreenState extends State<HomeScreen> {
               InputSection(
                 controller: _queryController,
                 isListening: provider.isListening,
+                isThinking: provider.isThinking,
                 onSend: () {
                   if (_queryController.text.trim().isNotEmpty) {
-                    provider.handleUserQuery(_queryController.text.trim());
+                    provider.handleUserQuery(
+                      _queryController.text.trim(),
+                    );
                   }
                 },
                 onMic: provider.toggleListening,
+                onInterrupt: provider.interrupt,
+                onChanged: provider.setDraftInput,
               ),
             ],
           ),

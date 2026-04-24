@@ -30,3 +30,9 @@ google_calendar_ai_agent/assets/gemini_api_key.json
 google_calendar_ai_agent/lib/GoogleAPIs/
 
 google_calendar_ai_agent/android/app/.cxx/
+google_calendar_ai_agent/lib/firebase_options.dart
+app_logs.txt
+google_calendar_ai_agent/firebase.json
+google_calendar_ai_agent/.firebaserc
+google_calendar_ai_agent/android/app/google-services.json
+google_calendar_ai_agent/coverage/lcov.info

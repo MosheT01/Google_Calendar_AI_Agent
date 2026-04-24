@@ -11,6 +11,7 @@ void main() {
             body: InputSection(
               controller: TextEditingController(),
               isListening: false,
+              isThinking: false,
               onSend: () {},
               onMic: () {},
             ),
@@ -27,6 +28,7 @@ void main() {
             body: InputSection(
               controller: TextEditingController(),
               isListening: false,
+              isThinking: false,
               onSend: () {},
               onMic: () {},
             ),
@@ -44,6 +46,7 @@ void main() {
             body: InputSection(
               controller: controller,
               isListening: false,
+              isThinking: false,
               onSend: () {},
               onMic: () {},
             ),
@@ -62,6 +65,7 @@ void main() {
             body: InputSection(
               controller: controller,
               isListening: false,
+              isThinking: false,
               onSend: () => called = true,
               onMic: () {},
             ),
@@ -80,6 +84,7 @@ void main() {
             body: InputSection(
               controller: TextEditingController(),
               isListening: false,
+              isThinking: false,
               onSend: () {},
               onMic: () => called = true,
             ),

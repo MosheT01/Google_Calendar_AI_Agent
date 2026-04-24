@@ -13,7 +13,7 @@ class CalendarApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => AppProvider()..initialize(),
       child: MaterialApp(
-        title: 'AI Calendar Assistant',
+        title: 'Bella Calendar',
         theme: ThemeData(
           primarySwatch: Colors.pink,
           useMaterial3: true,

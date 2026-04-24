@@ -5,15 +5,21 @@ import '../../core/constants/app_colors.dart';
 class InputSection extends StatefulWidget {
   final TextEditingController controller;
   final bool isListening;
+  final bool isThinking;
   final VoidCallback onSend;
   final VoidCallback onMic;
+  final VoidCallback? onInterrupt;
+  final ValueChanged<String>? onChanged;
 
   const InputSection({
     super.key,
     required this.controller,
     required this.isListening,
+    required this.isThinking,
     required this.onSend,
     required this.onMic,
+    this.onInterrupt,
+    this.onChanged,
   });
 
   @override
@@ -60,6 +66,7 @@ class _InputSectionState extends State<InputSection> {
                     child: TextField(
                       controller: widget.controller,
                       maxLines: null,
+                      onChanged: widget.onChanged,
                       decoration: InputDecoration(
                         hintText: "Type a message...",
                         border: InputBorder.none,
@@ -77,7 +84,17 @@ class _InputSectionState extends State<InputSection> {
               ),
             ),
             const SizedBox(width: 8),
-            if (widget.isListening)
+            if (widget.isThinking && widget.onInterrupt != null)
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: Colors.red,
+                child: IconButton(
+                  icon: const Icon(Icons.stop, color: Colors.white, size: 20),
+                  onPressed: widget.onInterrupt,
+                  tooltip: "Interrupt",
+                ),
+              )
+            else if (widget.isListening)
               CircleAvatar(
                 radius: 22,
                 backgroundColor: Colors.red,
@@ -92,13 +109,14 @@ class _InputSectionState extends State<InputSection> {
                 backgroundColor: AppColors.primary,
                 child: IconButton(
                   icon: Icon(
-                    widget.controller.text.trim().isEmpty ? Icons.mic : Icons.send,
+                    widget.controller.text.trim().isEmpty
+                        ? Icons.mic
+                        : Icons.send,
                     color: Colors.white,
                   ),
                   onPressed: () {
                     if (widget.controller.text.trim().isNotEmpty) {
                       widget.onSend();
-                      widget.controller.clear();
                     } else {
                       widget.onMic();
                     }

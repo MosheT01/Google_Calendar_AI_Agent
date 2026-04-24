@@ -43,7 +43,14 @@ class ChatListView extends StatelessWidget {
         }
         final message = messages[index];
         final isUser = message.role == 'user';
-        return ChatBubble(message: message.content, isUser: isUser);
+        return ChatBubble(
+          message: message.content,
+          isUser: isUser,
+          debugPrompt: message.debugPrompt,
+          debugTrace: message.debugTrace,
+          debugFunctionCalls: message.debugFunctionCalls,
+          debugResponse: message.debugResponse,
+        );
       },
     );
   }

@@ -18,7 +18,8 @@ void main() {
       expect(find.text('Hello'), findsOneWidget);
     });
 
-    testWidgets('should display assistant message aligned left', (tester) async {
+    testWidgets('should display assistant message aligned left',
+        (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
@@ -44,6 +45,28 @@ void main() {
         ),
       );
       expect(find.byType(SelectableText), findsOneWidget);
+    });
+
+    testWidgets('should show execution trace in debug section', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ChatBubble(
+              message: 'Done',
+              isUser: false,
+              debugTrace: 'cycle 1 -> listEvents',
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Show debug'), findsOneWidget);
+
+      await tester.tap(find.text('Show debug'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Execution Trace'), findsOneWidget);
+      expect(find.text('cycle 1 -> listEvents'), findsOneWidget);
     });
   });
 }

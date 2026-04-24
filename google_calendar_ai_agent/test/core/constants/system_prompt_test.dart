@@ -3,28 +3,21 @@ import 'package:google_calendar_ai_agent/core/constants/system_prompt.dart';
 
 void main() {
   group('SystemPrompt', () {
-    test('should build prompt with correct days', () {
-      final prompt = SystemPrompt.build(60);
-      expect(prompt.contains('60 calendar days'), true);
+    test('should build prompt', () {
+      final prompt = SystemPrompt.build();
+      expect(prompt.isNotEmpty, true);
     });
 
-    test('should contain response mode instructions', () {
-      final prompt = SystemPrompt.build(60);
-      expect(prompt.contains('Clarifying Mode'), true);
-      expect(prompt.contains('Code Output Mode'), true);
-      expect(prompt.contains('Generic Response Mode'), true);
+    test('should mention calendar', () {
+      final prompt = SystemPrompt.build();
+      expect(prompt.toLowerCase().contains('calendar'), true);
     });
 
-    test('should contain calendar function instructions', () {
-      final prompt = SystemPrompt.build(60);
-      expect(prompt.contains('addEvent'), true);
-      expect(prompt.contains('updateEvent'), true);
-      expect(prompt.contains('deleteEvent'), true);
-    });
-
-    test('should contain color options', () {
-      final prompt = SystemPrompt.build(60);
-      expect(prompt.contains('colorOptions'), true);
+    test('should mention today and workflow constraints', () {
+      final prompt = SystemPrompt.build();
+      expect(prompt.contains('Today is'), true);
+      expect(prompt.contains('Current local time is'), true);
+      expect(prompt.contains('Work in cycles'), true);
     });
   });
 }

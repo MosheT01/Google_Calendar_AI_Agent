@@ -1,13 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:googleapis/calendar/v3.dart' as calendar;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/utils/csv_logger.dart';
 import '../../core/utils/text_formatter.dart';
-import '../../core/utils/command_parser.dart';
 import '../../domain/entities/chat_message.dart';
-import '../../domain/entities/ai_response.dart';
 import '../../services/calendar_service.dart';
 import '../../services/ai_service.dart';
 import '../../services/tts_service.dart';
@@ -15,29 +13,53 @@ import '../../services/stt_service.dart';
 import '../../services/translation_service.dart';
 
 class AppProvider extends ChangeNotifier {
-  final CalendarService _calendarService = CalendarService();
-  final AiService _aiService = AiService();
-  final TtsService _ttsService = TtsService();
-  final SttService _sttService = SttService();
-  final TranslationService _translationService = TranslationService();
+  static const String _TAG = '[AppProvider]';
+  final CalendarService _calendarService;
+  final AiService _aiService;
+  final TtsService _ttsService;
+  final SttService _sttService;
+  final TranslationService _translationService;
+  final bool _autoStartListeningOnInit;
+  final bool _enableCsvLogging;
 
-  List<calendar.Event> _upcomingEvents = [];
+  AppProvider({
+    CalendarService? calendarService,
+    AiService? aiService,
+    TtsService? ttsService,
+    SttService? sttService,
+    TranslationService? translationService,
+    bool autoStartListeningOnInit = true,
+    bool enableCsvLogging = true,
+  })  : _calendarService = calendarService ?? CalendarService(),
+        _aiService = aiService ?? AiService(),
+        _ttsService = ttsService ?? TtsService(),
+        _sttService = sttService ?? SttService(),
+        _translationService = translationService ?? TranslationService(),
+        _autoStartListeningOnInit = autoStartListeningOnInit,
+        _enableCsvLogging = enableCsvLogging;
+
   List<ChatMessage> _chatMessages = [];
   String? _errorMessage;
   bool _isLoading = true;
   bool _isThinking = false;
   bool _isListening = false;
+  bool _autoListenAfterResponse = true;
+  String _draftInput = '';
+  int _requestSequence = 0;
+  int? _activeRequestId;
   String _currentModel = AppConstants.defaultModel;
+  String _currentTtsEngine = 'device';
   // ignore: prefer_final_fields - used for loading message animation
   int _loadingMessageIndex = 0;
 
-  List<calendar.Event> get upcomingEvents => _upcomingEvents;
   List<ChatMessage> get chatMessages => _chatMessages;
   String? get errorMessage => _errorMessage;
   bool get isLoading => _isLoading;
   bool get isThinking => _isThinking;
   bool get isListening => _isListening;
+  String get draftInput => _draftInput;
   String get currentModel => _currentModel;
+  String get currentTtsEngine => _currentTtsEngine;
   int get loadingMessageIndex => _loadingMessageIndex;
 
   final loadingMessages = [
@@ -56,204 +78,304 @@ class AppProvider extends ChangeNotifier {
   ];
 
   Future<void> initialize() async {
+    print('$_TAG initialize() called');
     await _loadSavedModel();
+    print('$_TAG Model loaded: $_currentModel');
+    await _loadSavedTtsEngine();
+    print('$_TAG TTS engine loaded: $_currentTtsEngine');
     await _calendarService.initialize();
+    print('$_TAG Calendar initialized');
     await _loadChatHistory();
+    print('$_TAG Chat history loaded: ${_chatMessages.length} messages');
+    _aiService.setCalendarService(_calendarService);
+    print('$_TAG Calendar service set on AI');
     await _aiService.initialize(_chatMessages);
+    print('$_TAG AI initialized (with tools)');
     await _ttsService.initialize();
+    await _ttsService.setEngine(_parseTtsEngine(_currentTtsEngine));
+    print('$_TAG TTS initialized');
     await _sttService.initialize();
+    print('$_TAG STT initialized');
     await _translationService.initialize();
-    await _fetchEvents();
+    print('$_TAG Translation initialized');
     _isLoading = false;
     notifyListeners();
+    print('$_TAG Initialization complete');
+    if (_autoStartListeningOnInit) {
+      unawaited(_startListeningSession());
+    }
   }
 
   Future<void> _loadSavedModel() async {
+    print('$_TAG _loadSavedModel() called');
     final prefs = await SharedPreferences.getInstance();
-    _currentModel = prefs.getString('default_model') ?? AppConstants.defaultModel;
+    _currentModel =
+        prefs.getString('default_model') ?? AppConstants.defaultModel;
+    print('$_TAG Loaded model: $_currentModel');
+  }
+
+  Future<void> _loadSavedTtsEngine() async {
+    print('$_TAG _loadSavedTtsEngine() called');
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('tts_engine') ?? 'device';
+    if (saved != 'device' && saved != 'cloud') {
+      _currentTtsEngine = 'device';
+      return;
+    }
+    _currentTtsEngine = saved;
+    print('$_TAG Loaded TTS engine: $_currentTtsEngine');
   }
 
   Future<void> saveDefaultModel(String model) async {
+    print('$_TAG saveDefaultModel() called with: $model');
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('default_model', model);
     _currentModel = model;
     await _aiService.changeModel(model, _chatMessages);
     notifyListeners();
+    print('$_TAG Model changed to: $model');
+  }
+
+  Future<void> saveTtsEngine(String engine) async {
+    print('$_TAG saveTtsEngine() called with: $engine');
+    final normalized = (engine == 'cloud') ? 'cloud' : 'device';
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('tts_engine', normalized);
+    _currentTtsEngine = normalized;
+    await _ttsService.setEngine(_parseTtsEngine(_currentTtsEngine));
+    notifyListeners();
+    print('$_TAG TTS engine changed to: $_currentTtsEngine');
+  }
+
+  TtsEngine _parseTtsEngine(String raw) {
+    return raw == 'cloud' ? TtsEngine.cloud : TtsEngine.device;
   }
 
   Future<void> _loadChatHistory() async {
+    print('$_TAG _loadChatHistory() called');
     final prefs = await SharedPreferences.getInstance();
+    final savedVersion = prefs.getString('chat_context_version');
+    if (savedVersion != AppConstants.chatContextVersion) {
+      print('$_TAG Chat context version changed. Clearing old history.');
+      _chatMessages = [];
+      await prefs.remove('chat_history');
+      await prefs.setString(
+        'chat_context_version',
+        AppConstants.chatContextVersion,
+      );
+      return;
+    }
+
     final jsonMessages = prefs.getString('chat_history');
     if (jsonMessages != null) {
       final dynamicMessages = jsonDecode(jsonMessages) as List;
       _chatMessages = dynamicMessages
-          .map((message) => ChatMessage.fromMap(Map<String, String>.from(message)))
+          .map((message) =>
+              ChatMessage.fromMap(Map<String, String>.from(message)))
           .toList();
+      print('$_TAG Loaded ${_chatMessages.length} chat messages');
+    } else {
+      print('$_TAG No chat history found');
     }
   }
 
   Future<void> _saveChatHistory() async {
+    print('$_TAG _saveChatHistory() called');
     final prefs = await SharedPreferences.getInstance();
     final jsonMessages = jsonEncode(
       _chatMessages.map((m) => m.toMap()).toList(),
     );
-    await prefs.setString('chat_history', jsonMessages);
-  }
-
-  Future<void> _fetchEvents() async {
-    _upcomingEvents = await _calendarService.fetchEvents();
-    
-    final nonLatinRegex = RegExp(r'[^\x00-\x7F]');
-    final needsTranslation = _upcomingEvents.any(
-      (e) => e.summary != null && nonLatinRegex.hasMatch(e.summary!),
+    await prefs.setString(
+      'chat_context_version',
+      AppConstants.chatContextVersion,
     );
-    
-    if (needsTranslation) {
-      _upcomingEvents = await Future.wait(_upcomingEvents.map((event) async {
-        if (event.summary != null && nonLatinRegex.hasMatch(event.summary!)) {
-          event.summary = await _translationService.translate(event.summary!);
-        }
-        return event;
-      }));
-    }
-    notifyListeners();
+    await prefs.setString('chat_history', jsonMessages);
+    print('$_TAG Saved ${_chatMessages.length} chat messages');
   }
 
-  Future<void> handleUserQuery(String query) async {
-    if (query.isEmpty) return;
+  Future<void> handleUserQuery(
+    String query, {
+    bool fromVoice = false,
+  }) async {
+    print('$_TAG handleUserQuery() called with: $query');
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.isEmpty) return;
 
-    _chatMessages.add(ChatMessage(role: 'user', content: query));
+    _autoListenAfterResponse = fromVoice;
+    _draftInput = '';
+    final requestId = ++_requestSequence;
+    _activeRequestId = requestId;
+
+    _chatMessages.add(ChatMessage(role: 'user', content: trimmedQuery));
     notifyListeners();
+    print('$_TAG User message added to chat');
 
     _isThinking = true;
     notifyListeners();
+    print('$_TAG Thinking: true');
 
-    final formattedEvents = _calendarService.formatEventsForAi(_upcomingEvents);
-    final now = DateTime.now();
-    final end = now.add(Duration(days: AppConstants.daysOfAccess));
-    final busyPeriods = await _calendarService.fetchFreeBusy(now, end);
-    final freeBusyData = _calendarService.formatFreeBusy(busyPeriods);
+    try {
+      print('$_TAG Sending to AI...');
+      final response = await _aiService.sendMessage(trimmedQuery);
+      if (_activeRequestId != requestId) {
+        print('$_TAG Ignoring stale/interrupted AI response');
+        return;
+      }
+      print(
+          '$_TAG AI response received: ${response.substring(0, response.length > 100 ? 100 : response.length)}...');
 
-    // ignore: prefer_const_constructors - variable interpolation needed
-    final calendarContext = '''
-Here is the user's calendar data:
-$formattedEvents
+      if (_enableCsvLogging) {
+        await CsvLogger.log(trimmedQuery, response);
+      }
+      if (_activeRequestId != requestId) {
+        print('$_TAG Ignoring stale/interrupted response after logging');
+        return;
+      }
+      if (_enableCsvLogging) {
+        print('$_TAG Logged to CSV');
+      }
 
-Here is the user's free/busy data:
-$freeBusyData
-''';
+      final displaySeed = TextFormatter.cleanResponseForDisplay(response);
+      final displayBase = displaySeed.isEmpty ? response : displaySeed;
+      final finalResponse = TextFormatter.humanizeDateTimes(displayBase);
+      _chatMessages.add(ChatMessage(
+        role: 'model',
+        content: finalResponse,
+        debugPrompt: kDebugMode ? _aiService.lastPrompt : null,
+        debugTrace: kDebugMode ? _aiService.lastTrace : null,
+        debugFunctionCalls: kDebugMode ? _aiService.lastFunctionCalls : null,
+        debugResponse: kDebugMode ? _aiService.lastResponse : null,
+      ));
+      final speechSeed = TextFormatter.cleanResponseForSpeech(response);
+      final speechBase = speechSeed.isEmpty ? finalResponse : speechSeed;
+      final finalSpeech = TextFormatter.humanizeDateTimes(speechBase);
+      unawaited(_speakInBackground(finalSpeech));
+    } catch (e) {
+      if (_activeRequestId != requestId) {
+        print('$_TAG Ignoring stale/interrupted error');
+        return;
+      }
+      _errorMessage = e.toString();
+      _chatMessages.add(ChatMessage(
+        role: 'model',
+        content: 'I hit an error while processing that request: $_errorMessage',
+      ));
+      print('$_TAG ERROR in handleUserQuery(): $e');
+    } finally {
+      if (_activeRequestId == requestId) {
+        _isThinking = false;
+        _activeRequestId = null;
+        await _saveChatHistory();
+        notifyListeners();
+      }
+    }
+    print('$_TAG handleUserQuery() complete');
+  }
 
-    final response = await _aiService.sendMessage(query, calendarContext);
-    
-    await CsvLogger.log(query, response);
-
-    final aiResponse = AiResponse.parse(response);
-
-    switch (aiResponse.mode) {
-      case ResponseMode.clarifying:
-        _chatMessages.add(ChatMessage(
-          role: 'model',
-          content: TextFormatter.cleanResponse(response),
-        ));
-        _speakInBackground(TextFormatter.cleanResponse(response).replaceAll('\n', ' '));
-        break;
-      case ResponseMode.codeOutput:
-        _executeCommandStack(aiResponse.commands ?? []);
-        _chatMessages.add(ChatMessage(
-          role: 'model',
-          content: aiResponse.content,
-        ));
-        _speakInBackground(aiResponse.content);
-        break;
-      case ResponseMode.generic:
-        _chatMessages.add(ChatMessage(
-          role: 'model',
-          content: TextFormatter.cleanResponse(response),
-        ));
-        _speakInBackground(TextFormatter.cleanResponse(response).replaceAll('\n', ' '));
-        break;
+  Future<void> _speakInBackground(String text) async {
+    print('$_TAG _speakInBackground() called');
+    if (_isListening) {
+      print('$_TAG Skipping TTS - currently listening');
+      return;
     }
 
-    _isThinking = false;
-    await _saveChatHistory();
+    var speechText = text;
+    if (_translationService.containsNonEnglish(speechText)) {
+      print('$_TAG Non-English content detected for TTS, translating...');
+      speechText = await _translationService.translateForSpeech(speechText);
+    }
+
+    final modifiedText = TextFormatter.formatForSpeech(speechText);
+    print(
+        '$_TAG Speaking: ${modifiedText.substring(0, modifiedText.length > 50 ? 50 : modifiedText.length)}...');
+    await _ttsService.speak(modifiedText);
+
+    if (_autoListenAfterResponse && !_isThinking) {
+      print('$_TAG Auto re-listen after TTS');
+      await Future.delayed(const Duration(milliseconds: 250));
+      await _startListeningSession();
+    }
+  }
+
+  void setDraftInput(String value) {
+    if (_draftInput == value) return;
+    _draftInput = value;
     notifyListeners();
   }
 
-  void _executeCommandStack(List<String> commands) {
-    for (final command in commands.reversed) {
-      if (command.startsWith('addEvent')) {
-        final args = CommandParser.parseArguments(command);
-        final title = args['title'];
-        final startTime = args['startTime'] != null
-            ? DateTime.parse(args['startTime']!)
-            : null;
-        final endTime = args['endTime'] != null
-            ? DateTime.parse(args['endTime']!)
-            : null;
-        if (title != null && startTime != null) {
-          _calendarService.addEvent(
-            title: title,
-            startTime: startTime,
-            endTime: endTime,
-            description: args['description'],
-            location: args['location'],
-            colorId: args['colorId'],
-          ).then((_) => _fetchEvents());
-        }
-      } else if (command.startsWith('updateEvent')) {
-        final args = CommandParser.parseArguments(command);
-        final eventId = args['eventId'];
-        if (eventId != null) {
-          _calendarService.updateEvent(
-            eventId,
-            title: args['title'],
-            startTime: args['startTime'] != null
-                ? DateTime.parse(args['startTime']!)
-                : null,
-            endTime: args['endTime'] != null
-                ? DateTime.parse(args['endTime']!)
-                : null,
-            description: args['description'],
-            location: args['location'],
-            colorId: args['colorId'],
-          ).then((_) => _fetchEvents());
-        }
-      } else if (command.startsWith('deleteEvent')) {
-        final args = CommandParser.parseArguments(command);
-        final eventId = args['eventId'];
-        if (eventId != null) {
-          _calendarService.deleteEvent(eventId).then((_) => _fetchEvents());
-        }
-      }
+  Future<void> _startListeningSession() async {
+    if (_isListening || _isThinking) {
+      return;
     }
-  }
 
-  void _speakInBackground(String text) {
-    if (_isListening) return;
-    final modifiedText = TextFormatter.formatForSpeech(text);
-    _ttsService.speak(modifiedText);
+    await _ttsService.stop();
+    _isListening = true;
+    notifyListeners();
+
+    await _sttService.startListening(
+      onListeningStateChanged: (listening) {
+        if (_isListening != listening) {
+          _isListening = listening;
+          notifyListeners();
+        }
+      },
+      onPartial: (partial) {
+        _draftInput = partial;
+        notifyListeners();
+      },
+      onResult: (result) {
+        _isListening = false;
+        _draftInput = result;
+        notifyListeners();
+        final trimmed = result.trim();
+        if (trimmed.isEmpty) {
+          if (_autoListenAfterResponse) {
+            unawaited(_startListeningSession());
+          }
+          return;
+        }
+        unawaited(handleUserQuery(trimmed, fromVoice: true));
+      },
+      onError: () {
+        _isListening = false;
+        notifyListeners();
+        if (_autoListenAfterResponse) {
+          unawaited(_startListeningSession());
+        }
+      },
+    );
   }
 
   Future<void> toggleListening() async {
+    print('$_TAG toggleListening() called, isListening: $_isListening');
     if (_isListening) {
+      _autoListenAfterResponse = false;
       await _sttService.stop();
       _isListening = false;
     } else {
-      await _ttsService.stop();
-      _isListening = true;
-      await _sttService.startListening(
-        onResult: (result) {
-          _isListening = false;
-          handleUserQuery(result);
-        },
-      );
+      _autoListenAfterResponse = true;
+      await _startListeningSession();
     }
+    notifyListeners();
+  }
+
+  void interrupt() {
+    print('$_TAG interrupt() called');
+    _autoListenAfterResponse = false;
+    _aiService.interrupt();
+    _activeRequestId = null;
+    unawaited(_ttsService.stop());
+    _isThinking = false;
+    _chatMessages.add(ChatMessage(
+      role: 'model',
+      content: '(Interrupted by user)',
+    ));
     notifyListeners();
   }
 
   @override
   void dispose() {
-    _ttsService.dispose();
+    unawaited(_ttsService.dispose());
     _translationService.dispose();
     super.dispose();
   }
