@@ -31,17 +31,17 @@ It is deliberately built like a small agent runtime, not a prompt wrapper.
 
 ```mermaid
 flowchart LR
-    U[User Voice/Text] --> P[AppProvider\nState + Orchestration]
-    P --> STT[Speech-to-Text]
-    P --> AI[AiService\nGemini + Tool Loop]
-    AI --> CAL[CalendarService\nGoogle Calendar API]
+    U[User voice or text] --> P["AppProvider: state and orchestration"]
+    P --> STT[Speech to text]
+    P --> AI["AiService: Gemini tool loop"]
+    AI --> CAL["CalendarService: Google Calendar API"]
     CAL --> AI
-    AI --> TF[TextFormatter + Date Humanizer]
-    TF --> TR[TranslationService\n(Non-English -> English for speech)]
-    TR --> TTS[TtsService\nDevice TTS or Cloud TTS endpoint]
+    AI --> TF[Text formatter]
+    TF --> TR["TranslationService: non-English speech"]
+    TR --> TTS["TtsService: device or cloud"]
     TTS --> U
-    P <--> STORE[SharedPreferences\nChat + Settings Persistence]
-    P --> CSV[CSV Logger\nAndroid Downloads]
+    P <--> STORE["SharedPreferences: chat and settings"]
+    P --> CSV["CSV logger: Android Downloads"]
 ```
 
 ## Agent Runtime (The Core Genius)
@@ -148,8 +148,8 @@ Run it explicitly (it is skipped by default):
 
 ```powershell
 # from google_calendar_ai_agent/
-$env:RUN_PRODUCTION_CALENDAR_TESTS='true'
-flutter test test/production/calendar_production_jan_2027_test.dart -r expanded
+$env:RUN_REAL_CALENDAR_TESTS='true'
+flutter test test/playground/calendar_real_jan_2027_test.dart -r expanded
 ```
 
 ## Why There Is No Install Guide
