@@ -48,6 +48,7 @@ class FakeCalendarService extends CalendarService {
     bool? allDay,
     String? calendarId,
     Map<String, dynamic>? advancedFields,
+    bool confirmDespiteConflicts = false,
   }) async {
     final event = calendar.Event(
       id: 'fake-event-${eventsById.length + 1}',
@@ -82,6 +83,7 @@ class FakeCalendarService extends CalendarService {
     bool? allDay,
     String? calendarId,
     Map<String, dynamic>? advancedFields,
+    bool confirmDespiteConflicts = false,
   }) async {
     final existing = eventsById[eventId] ??
         calendar.Event(

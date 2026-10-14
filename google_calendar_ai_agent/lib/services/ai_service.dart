@@ -8,6 +8,9 @@ import '../core/constants/app_constants.dart';
 import '../core/constants/system_prompt.dart';
 import '../domain/entities/chat_message.dart';
 import '../services/calendar_service.dart';
+import 'agent_loop_policy.dart';
+import 'calendar_conflicts.dart';
+import 'jerusalem_time.dart';
 import '../firebase_options.dart';
 
 class AiService {
@@ -44,6 +47,7 @@ class AiService {
   bool _isInitialized = false;
   CalendarService? _calendarService;
   bool _interrupted = false;
+  bool _allowMutations = true;
 
   String? _lastPrompt;
   String? _lastTrace;
@@ -177,12 +181,11 @@ class AiService {
       parameters: {
         'title': Schema.string(
             description: 'Event title - what the event is called'),
-        'startTime': Schema.string(
-            description:
-                'Start time in ISO 8601 format (e.g., 2026-04-19T15:00:00)'),
+        'startTime':
+            Schema.string(description: JerusalemTime.schemaDescription),
         'endTime': Schema.string(
             description:
-                'End time in ISO 8601 format - leave empty for 1 hour default'),
+                '${JerusalemTime.schemaDescription} Leave empty for a 1 hour default.'),
         'description':
             Schema.string(description: 'Optional event description/body'),
         'location': Schema.string(description: 'Optional event location'),
@@ -218,6 +221,9 @@ class AiService {
         'advancedFieldsJson': Schema.string(
             description:
                 'Optional JSON object patch encoded as a STRING. Example: {"guestsCanModify":true} or {"extendedProperties":{"private":{"tag":"vip"}}}.'),
+        'confirmDespiteConflicts': Schema.string(
+            description:
+                'Set true only after the user explicitly chooses to keep this time despite overlapping events.'),
       },
     );
 
@@ -225,12 +231,9 @@ class AiService {
       'listEvents',
       'List calendar events for a date range. Returns full event details and event IDs. IDs are REQUIRED before delete/update. Use this for read queries and follow-up detail questions.',
       parameters: {
-        'startDate': Schema.string(
-            description:
-                'Start date in ISO 8601 format (e.g., 2026-04-19T00:00:00)'),
-        'endDate': Schema.string(
-            description:
-                'End date in ISO 8601 format (e.g., 2026-04-19T23:59:59)'),
+        'startDate':
+            Schema.string(description: JerusalemTime.schemaDescription),
+        'endDate': Schema.string(description: JerusalemTime.schemaDescription),
         'query': Schema.string(
             description:
                 'Optional free-text filter against event fields (title, description, location, etc.)'),
@@ -270,9 +273,8 @@ class AiService {
             description:
                 'New event title (optional - only include what changes)'),
         'startTime':
-            Schema.string(description: 'New start time in ISO 8601 format'),
-        'endTime':
-            Schema.string(description: 'New end time in ISO 8601 format'),
+            Schema.string(description: JerusalemTime.schemaDescription),
+        'endTime': Schema.string(description: JerusalemTime.schemaDescription),
         'description': Schema.string(description: 'Optional new description'),
         'location': Schema.string(description: 'Optional new location'),
         'colorId': Schema.string(
@@ -307,6 +309,9 @@ class AiService {
         'advancedFieldsJson': Schema.string(
             description:
                 'Optional JSON object patch encoded as a STRING. Example: {"guestsCanModify":true} or {"extendedProperties":{"private":{"tag":"vip"}}}.'),
+        'confirmDespiteConflicts': Schema.string(
+            description:
+                'Set true only after the user explicitly chooses to keep this time despite overlapping events.'),
       },
     );
 
@@ -314,12 +319,9 @@ class AiService {
       'getFreeBusy',
       'Get busy time windows for a date range. Use this for explicit busy-time queries.',
       parameters: {
-        'startDate': Schema.string(
-            description:
-                'Start date/time in ISO 8601 format (e.g., 2026-04-19T00:00:00)'),
-        'endDate': Schema.string(
-            description:
-                'End date/time in ISO 8601 format (e.g., 2026-04-19T23:59:59)'),
+        'startDate':
+            Schema.string(description: JerusalemTime.schemaDescription),
+        'endDate': Schema.string(description: JerusalemTime.schemaDescription),
       },
     );
 
@@ -327,12 +329,9 @@ class AiService {
       'findFreeSlots',
       'Find concrete free time slots in a range using calendar busy data. Use this for availability/free-slot requests.',
       parameters: {
-        'startDate': Schema.string(
-            description:
-                'Start date/time in ISO 8601 format (e.g., 2026-04-19T00:00:00)'),
-        'endDate': Schema.string(
-            description:
-                'End date/time in ISO 8601 format (e.g., 2026-04-26T23:59:59)'),
+        'startDate':
+            Schema.string(description: JerusalemTime.schemaDescription),
+        'endDate': Schema.string(description: JerusalemTime.schemaDescription),
         'minDurationMinutes': Schema.string(
             description:
                 'Required minimum free-slot duration in minutes (e.g., 180 for 3 hours)'),
@@ -370,7 +369,8 @@ class AiService {
       ],
     );
 
-    final conversationHistory = history.map((message) {
+    final conversationHistory =
+        AgentLoopPolicy.recentPairs(history).map((message) {
       return Content.text('${message.role}: ${message.content}');
     }).toList();
 
@@ -401,15 +401,57 @@ class AiService {
     _lastResponse = null;
     _startTrace(prompt);
     _interrupted = false;
+    _allowMutations = AgentLoopPolicy.allowMutations(prompt);
+    _appendTrace(
+      'Mutations ${_allowMutations ? 'allowed' : 'blocked for this read'}',
+    );
 
-    try {
-      _appendTrace('Sending user query to model with tools enabled');
-      final content = Content.text(formattedPrompt);
-      var response = await _chat!.sendMessage(content);
+    var connectionRetries = 0;
+    var quotaRetried = false;
+    while (true) {
+      try {
+        return await _runAgentTurn(formattedPrompt);
+      } catch (e) {
+        if (AgentLoopPolicy.isConnectionAbort(e) &&
+            connectionRetries < AgentLoopPolicy.maxConnectionRetries) {
+          connectionRetries++;
+          _appendTrace(
+            'Connection aborted. Retry $connectionRetries/${AgentLoopPolicy.maxConnectionRetries}',
+          );
+          await Future<void>.delayed(
+            Duration(milliseconds: 400 * connectionRetries),
+          );
+          continue;
+        }
+
+        final quotaDelay = AgentLoopPolicy.quotaRetryDelaySeconds(e);
+        if (quotaDelay != null && !quotaRetried) {
+          quotaRetried = true;
+          _appendTrace('Quota limit hit. Retrying after ${quotaDelay}s');
+          await Future<void>.delayed(Duration(seconds: quotaDelay));
+          continue;
+        }
+
+        print('EXCEPTION: $e');
+        _appendTrace('Exception: $e');
+        _lastTrace = _toTraceText();
+        return 'Error: $e';
+      }
+    }
+  }
+
+  Future<String> _runAgentTurn(String formattedPrompt) async {
+    _appendTrace('Sending user query to model with tools enabled');
+    final content = Content.text(formattedPrompt);
+    var response = await _chat!.sendMessage(content);
+    final requiresFreeSlotLookup = _requiresFreeSlotLookup(
+        formattedPrompt.replaceFirst('User query: ', ''));
+    var usedFindFreeSlots = false;
+    var unfinishedNudges = 0;
+    var extraBudgetUsed = false;
+
+    while (true) {
       var cycles = 0;
-      final requiresFreeSlotLookup = _requiresFreeSlotLookup(prompt);
-      var usedFindFreeSlots = false;
-
       while (cycles < AppConstants.maxAgentCycles) {
         if (_interrupted) {
           _appendTrace('Request interrupted; stopping execution loop');
@@ -418,7 +460,10 @@ class AiService {
         }
 
         final cycle = cycles + 1;
-        _appendTrace('Cycle $cycle/${AppConstants.maxAgentCycles} started');
+        final budgetLabel = extraBudgetUsed ? 'extra' : 'primary';
+        _appendTrace(
+          'Cycle $cycle/${AppConstants.maxAgentCycles} ($budgetLabel) started',
+        );
         final functionCalls = response.functionCalls.toList();
         final responseText = response.text?.trim();
 
@@ -443,6 +488,19 @@ class AiService {
               continue;
             }
 
+            if (AgentLoopPolicy.looksUnfinished(responseText) &&
+                unfinishedNudges < AgentLoopPolicy.maxUnfinishedNudges) {
+              unfinishedNudges++;
+              _appendTrace(
+                'Unfinished progress text. Nudge $unfinishedNudges/${AgentLoopPolicy.maxUnfinishedNudges}',
+              );
+              response = await _chat!.sendMessage(
+                Content.text(AgentLoopPolicy.unfinishedNudge),
+              );
+              cycles++;
+              continue;
+            }
+
             _lastResponse = responseText;
             _appendTrace('Final response produced without further tool calls');
             _lastTrace = _toTraceText();
@@ -461,53 +519,81 @@ class AiService {
         }
 
         _lastFunctionCalls = _formatFunctionCalls(functionCalls);
-        final functionCall = functionCalls.first;
-        if (functionCall.name == 'findFreeSlots') {
-          usedFindFreeSlots = true;
-        }
-        _appendTrace(
-          'Model requested tool `${functionCall.name}` with args: ${_truncate(functionCall.args)}',
-        );
-
         if (_interrupted) {
           _appendTrace('Interrupted before tool execution');
           _lastTrace = _toTraceText();
           return 'Operation interrupted by user.';
         }
 
-        final result = await _executeWithGuardrails(functionCall);
-        _appendTrace(
-          'Tool `${functionCall.name}` result: ${_truncate(result)}',
+        final results = await AgentLoopPolicy.runAll(
+          functionCalls,
+          (FunctionCall functionCall) async {
+            if (functionCall.name == 'findFreeSlots') {
+              usedFindFreeSlots = true;
+            }
+            _appendTrace(
+              'Model requested tool `${functionCall.name}` with args: ${_truncate(functionCall.args)}',
+            );
+            final result = await _executeWithGuardrails(functionCall);
+            _appendTrace(
+              'Tool `${functionCall.name}` result: ${_truncate(result)}',
+            );
+            return result;
+          },
         );
 
+        final responses = <FunctionResponse>[];
+        for (var index = 0; index < functionCalls.length; index++) {
+          final functionCall = functionCalls[index];
+          responses.add(
+            FunctionResponse(
+              functionCall.name,
+              _jsonObjectMap(results[index]),
+              id: functionCall.id,
+            ),
+          );
+        }
         response = await _chat!.sendMessage(
-          Content.functionResponse(functionCall.name, result),
+          Content.functionResponses(responses),
         );
         _appendTrace(
-          'Tool result sent back to model for next reasoning cycle',
+          'Tool results sent back to model for next reasoning cycle',
         );
         cycles++;
       }
 
-      final fallback = response.text?.trim();
-      if (fallback != null && fallback.isNotEmpty) {
-        _lastResponse = fallback;
-        _appendTrace(
-          'Cycle limit reached; returning latest model response as fallback',
-        );
-        _lastTrace = _toTraceText();
-        return fallback;
+      if (extraBudgetUsed) {
+        break;
       }
-      _appendTrace('Cycle limit reached with no final response');
-      _lastTrace = _toTraceText();
-      return 'I could not complete that within the current tool cycle limit. '
-          'Please confirm if you want me to continue from here.';
-    } catch (e) {
-      print('EXCEPTION: $e');
-      _appendTrace('Exception: $e');
-      _lastTrace = _toTraceText();
-      return "Error: $e";
+      extraBudgetUsed = true;
+      _appendTrace('Cycle limit reached; starting one extra budget');
+      response = await _chat!.sendMessage(
+        Content.text(AgentLoopPolicy.extraBudgetNudge),
+      );
     }
+
+    final pendingCalls = response.functionCalls.toList();
+    final fallback = response.text?.trim();
+    if (pendingCalls.isEmpty &&
+        fallback != null &&
+        fallback.isNotEmpty &&
+        !AgentLoopPolicy.looksUnfinished(fallback)) {
+      _lastResponse = fallback;
+      _appendTrace('Extra budget ended with a final response');
+      _lastTrace = _toTraceText();
+      return fallback;
+    }
+
+    _appendTrace('Cycle limit reached with no final response');
+    _lastTrace = _toTraceText();
+    return 'I could not complete that within the current tool cycle limit. '
+        'Please confirm if you want me to continue from here.';
+  }
+
+  Map<String, Object?> _jsonObjectMap(Map<String, dynamic> value) {
+    return (jsonDecode(jsonEncode(value)) as Map).map(
+      (key, item) => MapEntry(key.toString(), item),
+    );
   }
 
   String _formatFunctionCalls(List<FunctionCall> functionCalls) {
@@ -616,17 +702,55 @@ class AiService {
     }
   }
 
+  String? _formatEventTime(DateTime? value) {
+    if (value == null) {
+      return null;
+    }
+    return JerusalemTime.formatWithOffset(value);
+  }
+
+  Map<String, dynamic> _eventSummary(calendar.Event event) {
+    return {
+      'id': event.id,
+      'title': event.summary,
+      'startTime': _formatEventTime(event.start?.dateTime ?? event.start?.date),
+      'endTime': _formatEventTime(event.end?.dateTime ?? event.end?.date),
+      'location': event.location,
+      'colorId': event.colorId,
+      'calendarId': event.organizer?.email,
+      'status': event.status,
+    };
+  }
+
+  CalendarSpan? _spanFromCalendarEvent(calendar.Event event) {
+    final id = event.id;
+    final start = event.start?.dateTime?.toLocal() ?? event.start?.date;
+    if (id == null || id.isEmpty || start == null) {
+      return null;
+    }
+    final end = event.end?.dateTime?.toLocal() ??
+        event.end?.date ??
+        start.add(const Duration(hours: 1));
+    return CalendarSpan(
+      id: id,
+      title: event.summary ?? '',
+      start: start,
+      end: end,
+      location: event.location,
+    );
+  }
+
   Map<String, dynamic> _eventToMap(calendar.Event event) {
     return {
       'id': event.id,
       'title': event.summary,
-      'startTime': event.start?.dateTime?.toIso8601String(),
-      'startDate': event.start?.date?.toIso8601String(),
-      'endTime': event.end?.dateTime?.toIso8601String(),
-      'endDate': event.end?.date?.toIso8601String(),
+      'startTime': _formatEventTime(event.start?.dateTime),
+      'startDate': _formatEventTime(event.start?.date),
+      'endTime': _formatEventTime(event.end?.dateTime),
+      'endDate': _formatEventTime(event.end?.date),
       'recurringEventId': event.recurringEventId,
-      'originalStartTime': event.originalStartTime?.dateTime?.toIso8601String(),
-      'originalStartDate': event.originalStartTime?.date?.toIso8601String(),
+      'originalStartTime': _formatEventTime(event.originalStartTime?.dateTime),
+      'originalStartDate': _formatEventTime(event.originalStartTime?.date),
       'isRecurringInstance':
           event.recurringEventId != null && event.originalStartTime != null,
       'description': event.description,
@@ -749,6 +873,14 @@ class AiService {
 
     _appendTrace('Running tool handler: $name');
 
+    if (!_allowMutations && _isMutationTool(name)) {
+      _appendTrace('Blocked $name on a read-only turn');
+      return {
+        'success': false,
+        'error': 'read-only turn',
+      };
+    }
+
     if (_calendarService == null) {
       _appendTrace('Calendar service unavailable');
       return {'error': 'Calendar service not initialized'};
@@ -775,14 +907,17 @@ class AiService {
           final allDayRaw = args['allDay'];
           final calendarId = args['calendarId'] as String?;
           final advancedFieldsRaw = args['advancedFieldsJson'] as String?;
+          final confirmDespiteConflicts =
+              _parseBoolArg(args['confirmDespiteConflicts'], false) ?? false;
 
           if (title == null || startTimeStr == null) {
             return {'error': 'title and startTime required'};
           }
 
-          final startTime = DateTime.parse(startTimeStr);
-          final endTime =
-              endTimeStr != null ? DateTime.parse(endTimeStr) : null;
+          final startTime = JerusalemTime.parseWallTime(startTimeStr);
+          final endTime = endTimeStr != null
+              ? JerusalemTime.parseWallTime(endTimeStr)
+              : null;
           final colorId = await _resolveColorId(rawColorId);
           final recurrenceRules = _parseStringList(recurrenceRulesRaw);
           final attendeeEmails = _parseStringList(attendeeEmailsRaw);
@@ -817,6 +952,7 @@ class AiService {
             allDay: allDay,
             calendarId: calendarId,
             advancedFields: advancedFields,
+            confirmDespiteConflicts: confirmDespiteConflicts,
           );
 
           return {
@@ -840,9 +976,9 @@ class AiService {
             return {'error': 'startDate required'};
           }
 
-          final startDate = DateTime.parse(startDateStr);
+          final startDate = JerusalemTime.parseWallTime(startDateStr);
           final endDate = endDateStr != null
-              ? DateTime.parse(endDateStr)
+              ? JerusalemTime.parseWallTime(endDateStr)
               : startDate.add(const Duration(days: 7));
           _appendTrace(
             'listEvents for range ${startDate.toIso8601String()} to ${endDate.toIso8601String()}, '
@@ -857,10 +993,19 @@ class AiService {
             includeDeleted: includeDeleted,
           );
 
+          final spans = <CalendarSpan>[];
+          for (final event in events) {
+            final span = _spanFromCalendarEvent(event);
+            if (span != null) {
+              spans.add(span);
+            }
+          }
+
           return {
             'success': true,
-            'events': events.map(_eventToMap).toList(),
-            'count': events.length
+            'events': events.map(_eventSummary).toList(),
+            'count': events.length,
+            'titleCollisions': titleCollisionGroups(spans),
           };
 
         case 'getEventById':
@@ -917,13 +1062,17 @@ class AiService {
           final allDayRaw = args['allDay'];
           final calendarId = args['calendarId'] as String?;
           final advancedFieldsRaw = args['advancedFieldsJson'] as String?;
+          final confirmDespiteConflicts =
+              _parseBoolArg(args['confirmDespiteConflicts'], false) ?? false;
 
           if (eventId == null) return {'error': 'eventId required'};
 
-          final startTime =
-              startTimeStr != null ? DateTime.parse(startTimeStr) : null;
-          final endTime =
-              endTimeStr != null ? DateTime.parse(endTimeStr) : null;
+          final startTime = startTimeStr != null
+              ? JerusalemTime.parseWallTime(startTimeStr)
+              : null;
+          final endTime = endTimeStr != null
+              ? JerusalemTime.parseWallTime(endTimeStr)
+              : null;
           final colorId = await _resolveColorId(rawColorId);
           final recurrenceRules = _parseStringList(recurrenceRulesRaw);
           final attendeeEmails = _parseStringList(attendeeEmailsRaw);
@@ -959,6 +1108,7 @@ class AiService {
             allDay: allDay,
             calendarId: calendarId,
             advancedFields: advancedFields,
+            confirmDespiteConflicts: confirmDespiteConflicts,
           );
 
           return {
@@ -978,8 +1128,8 @@ class AiService {
             return {'error': 'startDate and endDate required'};
           }
 
-          final startDate = DateTime.parse(startDateStr);
-          final endDate = DateTime.parse(endDateStr);
+          final startDate = JerusalemTime.parseWallTime(startDateStr);
+          final endDate = JerusalemTime.parseWallTime(endDateStr);
           _appendTrace(
             'getFreeBusy for range ${startDate.toIso8601String()} to ${endDate.toIso8601String()}',
           );
@@ -1003,8 +1153,8 @@ class AiService {
             return {'error': 'startDate and endDate required'};
           }
 
-          final startDate = DateTime.parse(startDateStr);
-          final endDate = DateTime.parse(endDateStr);
+          final startDate = JerusalemTime.parseWallTime(startDateStr);
+          final endDate = JerusalemTime.parseWallTime(endDateStr);
           final minDurationMinutes = _parseIntArg(minDurationRaw, 60);
           final dayStartHour = _parseIntArg(dayStartHourRaw, 8);
           final dayEndHour = _parseIntArg(dayEndHourRaw, 22);
@@ -1045,6 +1195,13 @@ class AiService {
         default:
           return {'error': 'Unknown function: $name'};
       }
+    } on CalendarConflictException catch (e) {
+      _appendTrace('Write blocked by ${e.conflicts.length} overlap(s)');
+      return {
+        'success': false,
+        'error': 'conflicts',
+        'conflicts': e.conflicts.map((span) => span.toJson()).toList(),
+      };
     } catch (e) {
       _appendTrace('Tool execution error in "$name": $e');
       return {'error': e.toString()};
@@ -1203,7 +1360,7 @@ class AiService {
 
         final expectedStartText = functionCall.args['startTime'] as String?;
         if (expectedStartText != null) {
-          final expectedStart = DateTime.parse(expectedStartText);
+          final expectedStart = JerusalemTime.parseWallTime(expectedStartText);
           if (allDayExpected == true || isAllDayEvent) {
             final actualStartDate = event.start?.date;
             if (actualStartDate == null ||
@@ -1222,7 +1379,7 @@ class AiService {
 
         final expectedEndText = functionCall.args['endTime'] as String?;
         if (expectedEndText != null) {
-          final expectedEnd = DateTime.parse(expectedEndText);
+          final expectedEnd = JerusalemTime.parseWallTime(expectedEndText);
           if (allDayExpected == true || isAllDayEvent) {
             final actualEndDate = event.end?.date;
             final expectedEndDateOnly = DateTime(
