@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:googleapis/calendar/v3.dart' as calendar;
 import 'package:googleapis_auth/auth_io.dart';
 import '../core/constants/app_constants.dart';
+import 'calendar_conflicts.dart';
 
 class CalendarService {
   static const String _TAG = '[CalendarService]';
@@ -107,6 +108,54 @@ class CalendarService {
         DateTime.fromMillisecondsSinceEpoch(0);
   }
 
+  Future<void> _rejectOverlaps({
+    required DateTime start,
+    required DateTime end,
+    String? excludeEventId,
+    required bool confirmDespiteConflicts,
+  }) async {
+    final dayStart = DateTime(start.year, start.month, start.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final events = await fetchEventsByDateRange(dayStart, dayEnd);
+    final spans = <CalendarSpan>[];
+    for (final event in events) {
+      final span = _spanFromEvent(event);
+      if (span != null) {
+        spans.add(span);
+      }
+    }
+    rejectIfOverlapping(
+      confirmDespiteConflicts: confirmDespiteConflicts,
+      existing: spans,
+      start: start,
+      end: end,
+      excludeEventId: excludeEventId,
+    );
+  }
+
+  CalendarSpan? _spanFromEvent(calendar.Event event) {
+    final id = event.id;
+    if (id == null || id.isEmpty) {
+      return null;
+    }
+    final start = _eventStartAsLocal(event);
+    final end = event.end?.dateTime?.toLocal() ??
+        (event.end?.date == null
+            ? start.add(const Duration(hours: 1))
+            : DateTime(
+                event.end!.date!.year,
+                event.end!.date!.month,
+                event.end!.date!.day,
+              ));
+    return CalendarSpan(
+      id: id,
+      title: event.summary ?? '',
+      start: start,
+      end: end,
+      location: event.location,
+    );
+  }
+
   String _calendarIdForEventId(String eventId) {
     return _eventCalendarIndex[eventId] ?? _defaultCalendarId;
   }
@@ -179,6 +228,7 @@ class CalendarService {
     bool? allDay,
     String? calendarId,
     Map<String, dynamic>? advancedFields,
+    bool confirmDespiteConflicts = false,
   }) async {
     print('$_TAG addEvent called');
     print('$_TAG Title: $title');
@@ -231,6 +281,14 @@ class CalendarService {
 
     event = _applyAdvancedFields(event, advancedFields);
 
+    await _rejectOverlaps(
+      start: isAllDay
+          ? DateTime(startTime.year, startTime.month, startTime.day)
+          : startTime,
+      end: isAllDay ? allDayEndDate : resolvedEndTime,
+      confirmDespiteConflicts: confirmDespiteConflicts,
+    );
+
     print('$_TAG Event object created, inserting...');
     final result = await _api.events.insert(event, targetCalendarId);
     _rememberEventCalendar(result, targetCalendarId);
@@ -258,6 +316,7 @@ class CalendarService {
     bool? allDay,
     String? calendarId,
     Map<String, dynamic>? advancedFields,
+    bool confirmDespiteConflicts = false,
   }) async {
     print('$_TAG updateEvent called');
     print('$_TAG Event ID: $eventId');
@@ -334,6 +393,23 @@ class CalendarService {
     }
 
     event = _applyAdvancedFields(event, advancedFields);
+
+    if (startTime != null || endTime != null) {
+      final nextStart = startTime ??
+          event.start?.dateTime?.toLocal() ??
+          event.start?.date ??
+          DateTime.now();
+      final nextEnd = endTime ??
+          event.end?.dateTime?.toLocal() ??
+          event.end?.date ??
+          nextStart.add(const Duration(hours: 1));
+      await _rejectOverlaps(
+        start: nextStart,
+        end: nextEnd,
+        excludeEventId: eventId,
+        confirmDespiteConflicts: confirmDespiteConflicts,
+      );
+    }
 
     print('$_TAG Updating event...');
     final result = await _api.events.update(event, targetCalendarId, eventId);
