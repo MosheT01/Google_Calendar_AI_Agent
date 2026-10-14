@@ -1,174 +1,109 @@
 # AI Calendar Assistant
 
-An **agentic, voice-first calendar copilot** that doesn’t just chat about your schedule, it **acts on it**.
+A personal assistant with a real voice and a real calendar. You talk to it the way you would talk to ChatGPT. It answers by reading and changing your Google Calendar.
 
-This project started as “ChatGPT for my calendar.”  
-That idea stayed the same. The architecture is now far more advanced.
+I built the whole thing myself: the Flutter app, the model loop, the Calendar integration, and the hands-free voice path. It is the project I use every day, not a demo that stops at a chat bubble.
 
-## At A Glance
+A current ChatGPT model can plug into a calendar and do most of this. When I started, that did not exist. There was no MCP, and there was no practical agentic model. Siri and Google Assistant could set a timer or drop one event on a calendar. They could not look at a real week, find a free slot, and then change the calendar in the same conversation.
 
-- Natural language + voice interface over real Google Calendar operations.
-- Android-first runtime (Firebase options and app permissions currently configured for Android).
-- Gemini model with tool-calling (create, update, delete, list, free/busy, find slots, colors).
-- Guardrailed mutation pipeline: retry logic + post-action verification against Calendar state.
-- Continuous hands-free loop: listen -> reason -> execute -> speak -> listen again.
-- Debug-first developer UX: execution traces and function calls visible in-chat (debug builds).
-
-## What Makes This Different
-
-Most “AI calendar apps” generate text.  
-This one runs a **closed-loop action engine**:
-
-1. Understand request.
-2. Call tools.
-3. Validate outcomes.
-4. Recover from failures.
-5. Only then commit to the user-facing answer.
-
-It is deliberately built like a small agent runtime, not a prompt wrapper.
-
-## Current Architecture
+The first version asked the model for one structured command and parsed that into a single calendar action. As the models got better, I rebuilt it. The app now gives Gemini a set of calendar tools and lets it call them in a loop: look, decide, write, read the result back, and continue until the request is done. That tool loop is the idea MCP later made standard. This project stayed current by replacing the old command parser with that agent.
 
 ```mermaid
 flowchart LR
-    U[User Voice/Text] --> P[AppProvider\nState + Orchestration]
-    P --> STT[Speech-to-Text]
-    P --> AI[AiService\nGemini + Tool Loop]
-    AI --> CAL[CalendarService\nGoogle Calendar API]
-    CAL --> AI
-    AI --> TF[TextFormatter + Date Humanizer]
-    TF --> TR[TranslationService\n(Non-English -> English for speech)]
-    TR --> TTS[TtsService\nDevice TTS or Cloud TTS endpoint]
-    TTS --> U
-    P <--> STORE[SharedPreferences\nChat + Settings Persistence]
-    P --> CSV[CSV Logger\nAndroid Downloads]
+    subgraph first [First version]
+        U1[User] --> M1[Model]
+        M1 --> P1[One parsed command]
+        P1 --> A1[One calendar action]
+    end
+    subgraph current [Current version]
+        U2[User] --> M2[Gemini]
+        M2 --> T2[Calendar tools]
+        T2 --> M2
+        M2 --> R2[Verified result]
+        R2 --> U2
+    end
 ```
 
-## Agent Runtime (The Core Genius)
-
-Inside `AiService`, the assistant runs a bounded tool loop (`maxAgentCycles = 12`) with safety rails:
-
-- **Function-calling tools** include:
-  - `addEvent`, `updateEvent`, `deleteEvent`
-  - `listEvents`, `getEventById`
-  - `getFreeBusy`, `findFreeSlots`
-  - `getEventColors`
-- **Conflict-first policy** is encoded in the system prompt:
-  - Before time mutations, inspect overlaps first.
-  - If conflicts exist, ask user to pick a resolution path.
-- **Mutation guardrails**:
-  - Retry transient/recoverable tool failures.
-  - Verify create/update/delete by re-fetching event state.
-  - Re-run verification flow when results are inconclusive.
-- **Availability integrity**:
-  - If user asks for free time, runtime enforces actual `findFreeSlots` usage before final answer.
-- **Color intelligence**:
-  - Human color names (`red`, `lavender`, `blue`) map to Google Calendar color IDs.
-  - Hex matching is supported via real color metadata lookup.
-- **Advanced patching**:
-  - Supports JSON patch-like updates through `advancedFieldsJson` for non-trivial event fields.
-
-## Calendar Engine
-
-`CalendarService` is not a thin wrapper. It handles practical complexity:
-
-- Auth via service account credentials.
-- Multi-calendar access with cached accessible calendar IDs.
-- Event-to-calendar indexing so follow-up updates/deletes target the correct calendar.
-- Recurring instance-aware deletion behavior.
-- Full event payload support:
-  - attendees, reminders, recurrence, visibility, transparency, source metadata, all-day handling, advanced fields.
-- Deterministic free-slot finding:
-  - merges busy ranges across calendars,
-  - applies day-window constraints,
-  - enforces minimum duration,
-  - returns actionable slot windows.
-
-## Voice + Language Stack
-
-- **STT**: streaming/partial recognition into live draft input.
-- **TTS**:
-  - Device TTS mode.
-  - Cloud TTS mode through a configurable endpoint (`assets/config.json`).
-  - Automatic fallback to device TTS if cloud synthesis fails.
-- **Translation for speech output**:
-  - Detects non-English segments.
-  - Translates to English for cleaner TTS delivery.
-  - Caches translated segments for repeated phrases.
-
-## Product Experience
-
-- WhatsApp-like chat UX with markdown rendering for model responses.
-- Model switching at runtime (Gemini 2.5 and Gemini 3 preview variants).
-- TTS engine switching at runtime (device/cloud).
-- Interrupt button while thinking.
-- Persisted conversation context with versioned invalidation.
-- Debug drawer per assistant message (prompt, execution trace, tool calls, raw response).
-
-## Repo Map
-
-- `google_calendar_ai_agent/lib/presentation/*` -> UI and state orchestration.
-- `google_calendar_ai_agent/lib/services/*` -> AI runtime, calendar integration, speech/translation stack.
-- `google_calendar_ai_agent/lib/core/*` -> prompt, constants, formatting, logging utilities.
-- `google_calendar_ai_agent/test/*` -> widget/unit coverage for critical behaviors.
-- `google_calendar_ai_agent/functions/*` -> Firebase Functions scaffold for cloud-side expansion.
-
-## Safe Testing (No Production Calendar Writes)
-
-The test suite is now built to run against injected **fake services** instead of real calendar/AI/TTS backends:
-
-- `AppProvider` supports dependency injection for calendar, AI, TTS, STT, and translation services.
-- Tests use in-memory fakes from `test/support/fakes.dart`.
-- Auto-listening and CSV logging are disabled in tests for deterministic, non-interactive runs.
-
-Recommended commands:
-
-```bash
-# from google_calendar_ai_agent/
-flutter test
-flutter test --coverage
-flutter test test/e2e/app_web_flow_test.dart -d chrome
-```
-
-Notes:
-
-- Use `-d chrome` for web-style E2E widget flow testing.  
-  `--platform chrome` can hang on some Flutter setups.
-- These tests do **not** mutate your production calendar because they never call live `CalendarService` integrations.
-
-## Guarded Production Calendar Test
-
-There is also a real integration suite that calls the live Google Calendar API with strict write guards:
-
-- Writes are constrained to **January 2027** only.
-- Test-created event titles must include `test_event_in_`.
-- Cleanup only removes events that match that title pattern in that month.
-
-Run it explicitly (it is skipped by default):
-
-```powershell
-# from google_calendar_ai_agent/
-$env:RUN_PRODUCTION_CALENDAR_TESTS='true'
-flutter test test/production/calendar_production_jan_2027_test.dart -r expanded
-```
-
-## Why There Is No Install Guide
-
-This is a **private personal system**, not a plug-and-play open-source package.
-
-It depends on private credentials/configuration (calendar access, Firebase project wiring, cloud endpoints, personal preferences), so the README focuses on **architecture and ideas**, not “clone + run.”
-
-## Demo Video
+[Five-minute demo](https://www.youtube.com/watch?v=GhVEaJZW7uU)
 
 <a href="https://www.youtube.com/watch?v=GhVEaJZW7uU" target="_blank">
-    <img src="https://img.youtube.com/vi/GhVEaJZW7uU/0.jpg" alt="AI Calendar Assistant Demo on YouTube" width="320"/>
+    <img src="https://img.youtube.com/vi/GhVEaJZW7uU/0.jpg" alt="AI Calendar Assistant demo on YouTube" width="320"/>
 </a>
 
-## Vision
+## What you can ask
 
-Today: a personal AI scheduler with real execution reliability.  
-Tomorrow: the same architecture can power customer-facing booking agents, internal scheduling copilots, and vertical assistants where conversational UX must still produce deterministic operational outcomes.
+- "What's my week looking like?"
+- "Find a 2-hour free slot next week for lunch at noon."
+- "Push my next meeting by an hour."
+- "Add a green course block every Sunday in June, 12:30 to 3:30."
 
-## Disclaimer
+It can list, create, move, and delete events. If a time overlaps something already on the calendar, it says so and asks how to resolve it instead of silently double-booking you.
 
-Personal project. Private APIs/configuration. Not intended for general distribution in its current form.
+## Why it is more than a chatbot
+
+Most calendar bots generate a polite sentence. This one has to be right, because the sentence is followed by a write to a live calendar.
+
+1. You speak or type.
+2. Gemini decides which calendar tool to call.
+3. The app runs that tool against Google Calendar.
+4. It reads the event back and checks that the change actually landed.
+5. It speaks the result, then listens for the next request.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant App
+    participant Gemini
+    participant Calendar
+    User->>App: Speak or type
+    App->>Gemini: Request and tool list
+    Gemini->>Calendar: listEvents or addEvent
+    Calendar-->>Gemini: Tool result
+    Gemini->>Calendar: Next tool if the request is not done
+    Calendar-->>Gemini: Tool result
+    Gemini-->>App: Final answer after the write is checked
+    App->>User: Spoken reply, then listen again
+```
+
+A free-time question is answered from real open slots, not from a guess. A color like "green" is mapped to a real Calendar color. After a create, update, or delete, the app does not tell you it worked until the calendar agrees.
+
+## What I built
+
+| Piece | What it does |
+| --- | --- |
+| Flutter app | WhatsApp-style chat, voice button, interrupt, model picker |
+| Gemini tool loop | `listEvents`, `addEvent`, `updateEvent`, `deleteEvent`, `getFreeBusy`, `findFreeSlots`, `getEventColors` |
+| Google Calendar API | Service-account access across the calendars I use, including recurring events |
+| Voice | On-device speech-to-text, device or cloud text-to-speech, English speech when the reply is not English |
+
+```mermaid
+flowchart TB
+    Voice[Voice] --> STT[Speech to text]
+    Typed[Typed text] --> App[Flutter app]
+    STT --> App
+    App --> Gemini[Gemini tool loop]
+    Gemini --> Tools[Calendar tools]
+    Tools --> API[Google Calendar API]
+    API --> Tools
+    Tools --> Gemini
+    Gemini --> Check[Read the event back]
+    Check --> TTS[Text to speech]
+    TTS --> Voice
+```
+
+The loop is bounded. Every tool result is checked. If a call fails, the assistant retries when the error is recoverable, then tells you the real blocker instead of inventing a success.
+
+## On the phone
+
+- Hands-free: listen, act, speak, listen again.
+- Interrupt while it is thinking or talking.
+- Switch the Gemini model or the speech engine without restarting.
+- In a debug build, each reply can show the prompt, the tool calls, and the trace. That is how I catch a bad calendar write before I trust it.
+
+## Where it can go
+
+The same shape is a booking agent: a person talks, the assistant checks a real calendar, and the appointment only exists after the API says it does. I built it for my own schedule first, because that is the only way to find out whether the agent is actually reliable.
+
+## Notes
+
+This is a personal project. Calendar access, Firebase, and speech keys stay private, so the repo is not a clone-and-run app. Behavior is covered by unit and widget tests that use fake calendar and model services. The live calendar suite is opt-in and only writes tagged events in January 2027. See [TESTING.md](TESTING.md).
