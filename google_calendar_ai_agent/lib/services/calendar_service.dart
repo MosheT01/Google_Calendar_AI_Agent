@@ -8,13 +8,25 @@ class CalendarService {
   static const String _TAG = '[CalendarService]';
   late calendar.CalendarApi _api;
   final Future<String> Function() _serviceAccountLoader;
+  final String? _defaultCalendarIdOverride;
   final Map<String, String> _eventCalendarIndex = {};
   List<String>? _cachedCalendarIds;
   DateTime? _calendarIdsCachedAt;
 
-  CalendarService({Future<String> Function()? serviceAccountLoader})
-      : _serviceAccountLoader = serviceAccountLoader ??
-            (() => rootBundle.loadString('assets/service_account.json'));
+  CalendarService({
+    Future<String> Function()? serviceAccountLoader,
+    String? defaultCalendarIdOverride,
+  })  : _serviceAccountLoader = serviceAccountLoader ??
+            (() => rootBundle.loadString('assets/service_account.json')),
+        _defaultCalendarIdOverride = defaultCalendarIdOverride;
+
+  String get _defaultCalendarId {
+    final override = _defaultCalendarIdOverride?.trim();
+    if (override != null && override.isNotEmpty) {
+      return override;
+    }
+    return AppConstants.calendarEmail;
+  }
 
   Future<void> initialize() async {
     print('$_TAG Initializing...');
@@ -74,7 +86,7 @@ class CalendarService {
       pageToken = listResponse.nextPageToken;
     } while (pageToken != null && pageToken.isNotEmpty);
 
-    ids.add(AppConstants.calendarEmail);
+    ids.add(_defaultCalendarId);
     _cachedCalendarIds = ids.toList();
     _calendarIdsCachedAt = now;
 
@@ -96,7 +108,7 @@ class CalendarService {
   }
 
   String _calendarIdForEventId(String eventId) {
-    return _eventCalendarIndex[eventId] ?? AppConstants.calendarEmail;
+    return _eventCalendarIndex[eventId] ?? _defaultCalendarId;
   }
 
   Future<List<calendar.Event>> fetchEventsByDateRange(
@@ -173,7 +185,7 @@ class CalendarService {
     print('$_TAG Start: ${startTime.toIso8601String()}');
     print('$_TAG End: ${endTime?.toIso8601String()}');
 
-    final targetCalendarId = calendarId ?? AppConstants.calendarEmail;
+    final targetCalendarId = calendarId ?? _defaultCalendarId;
     final resolvedEndTime = endTime ?? startTime.add(const Duration(hours: 1));
 
     final isAllDay = allDay == true;

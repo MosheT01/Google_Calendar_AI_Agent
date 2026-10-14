@@ -36,3 +36,6 @@ google_calendar_ai_agent/firebase.json
 google_calendar_ai_agent/.firebaserc
 google_calendar_ai_agent/android/app/google-services.json
 google_calendar_ai_agent/coverage/lcov.info
+google_calendar_ai_agent/test/playground/playground.local.json
+google_calendar_ai_agent/.tmp/
+firebase-debug.log

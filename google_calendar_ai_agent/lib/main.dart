@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'presentation/providers/app_provider.dart';
 import 'presentation/screens/home_screen.dart';
@@ -11,7 +12,7 @@ class CalendarApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (_) => AppProvider()..initialize(),
+      create: (_) => AppProvider(enableVoiceStack: !kIsWeb)..initialize(),
       child: MaterialApp(
         title: 'Bella Calendar',
         theme: ThemeData(

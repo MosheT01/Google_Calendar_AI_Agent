@@ -16,9 +16,10 @@ class AppProvider extends ChangeNotifier {
   static const String _TAG = '[AppProvider]';
   final CalendarService _calendarService;
   final AiService _aiService;
-  final TtsService _ttsService;
-  final SttService _sttService;
-  final TranslationService _translationService;
+  final TtsService? _ttsService;
+  final SttService? _sttService;
+  final TranslationService? _translationService;
+  final bool _enableVoiceStack;
   final bool _autoStartListeningOnInit;
   final bool _enableCsvLogging;
 
@@ -28,13 +29,17 @@ class AppProvider extends ChangeNotifier {
     TtsService? ttsService,
     SttService? sttService,
     TranslationService? translationService,
+    bool enableVoiceStack = true,
     bool autoStartListeningOnInit = true,
     bool enableCsvLogging = true,
   })  : _calendarService = calendarService ?? CalendarService(),
         _aiService = aiService ?? AiService(),
-        _ttsService = ttsService ?? TtsService(),
-        _sttService = sttService ?? SttService(),
-        _translationService = translationService ?? TranslationService(),
+        _enableVoiceStack = enableVoiceStack,
+        _ttsService = enableVoiceStack ? (ttsService ?? TtsService()) : null,
+        _sttService = enableVoiceStack ? (sttService ?? SttService()) : null,
+        _translationService = enableVoiceStack
+            ? (translationService ?? TranslationService())
+            : null,
         _autoStartListeningOnInit = autoStartListeningOnInit,
         _enableCsvLogging = enableCsvLogging;
 
@@ -79,30 +84,49 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> initialize() async {
     print('$_TAG initialize() called');
-    await _loadSavedModel();
-    print('$_TAG Model loaded: $_currentModel');
-    await _loadSavedTtsEngine();
-    print('$_TAG TTS engine loaded: $_currentTtsEngine');
-    await _calendarService.initialize();
-    print('$_TAG Calendar initialized');
-    await _loadChatHistory();
-    print('$_TAG Chat history loaded: ${_chatMessages.length} messages');
-    _aiService.setCalendarService(_calendarService);
-    print('$_TAG Calendar service set on AI');
-    await _aiService.initialize(_chatMessages);
-    print('$_TAG AI initialized (with tools)');
-    await _ttsService.initialize();
-    await _ttsService.setEngine(_parseTtsEngine(_currentTtsEngine));
-    print('$_TAG TTS initialized');
-    await _sttService.initialize();
-    print('$_TAG STT initialized');
-    await _translationService.initialize();
-    print('$_TAG Translation initialized');
-    _isLoading = false;
-    notifyListeners();
-    print('$_TAG Initialization complete');
-    if (_autoStartListeningOnInit) {
-      unawaited(_startListeningSession());
+    try {
+      await _loadSavedModel();
+      print('$_TAG Model loaded: $_currentModel');
+      await _loadSavedTtsEngine();
+      print('$_TAG TTS engine loaded: $_currentTtsEngine');
+      await _calendarService.initialize();
+      print('$_TAG Calendar initialized');
+      await _loadChatHistory();
+      print('$_TAG Chat history loaded: ${_chatMessages.length} messages');
+      _aiService.setCalendarService(_calendarService);
+      print('$_TAG Calendar service set on AI');
+      await _aiService.initialize(_chatMessages);
+      print('$_TAG AI initialized (with tools)');
+      if (_enableVoiceStack) {
+        final tts = _ttsService;
+        final stt = _sttService;
+        final translation = _translationService;
+        if (tts == null || stt == null || translation == null) {
+          throw StateError(
+            'Voice stack enabled but services were not created.',
+          );
+        }
+        await tts.initialize();
+        await tts.setEngine(_parseTtsEngine(_currentTtsEngine));
+        print('$_TAG TTS initialized');
+        await stt.initialize();
+        print('$_TAG STT initialized');
+        await translation.initialize();
+        print('$_TAG Translation initialized');
+      } else {
+        print('$_TAG Voice stack disabled for this run');
+      }
+      print('$_TAG Initialization complete');
+      if (_autoStartListeningOnInit) {
+        unawaited(_startListeningSession());
+      }
+    } catch (e, st) {
+      _errorMessage = e.toString();
+      print('$_TAG ERROR in initialize(): $e');
+      print(st);
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
   }
 
@@ -142,7 +166,13 @@ class AppProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('tts_engine', normalized);
     _currentTtsEngine = normalized;
-    await _ttsService.setEngine(_parseTtsEngine(_currentTtsEngine));
+    if (_enableVoiceStack) {
+      final tts = _ttsService;
+      if (tts == null) {
+        throw StateError('Voice stack enabled but TTS service is unavailable.');
+      }
+      await tts.setEngine(_parseTtsEngine(_currentTtsEngine));
+    }
     notifyListeners();
     print('$_TAG TTS engine changed to: $_currentTtsEngine');
   }
@@ -274,21 +304,27 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> _speakInBackground(String text) async {
     print('$_TAG _speakInBackground() called');
+    final tts = _ttsService;
+    final translation = _translationService;
+    if (!_enableVoiceStack || tts == null || translation == null) {
+      print('$_TAG Skipping TTS - voice stack disabled');
+      return;
+    }
     if (_isListening) {
       print('$_TAG Skipping TTS - currently listening');
       return;
     }
 
     var speechText = text;
-    if (_translationService.containsNonEnglish(speechText)) {
+    if (translation.containsNonEnglish(speechText)) {
       print('$_TAG Non-English content detected for TTS, translating...');
-      speechText = await _translationService.translateForSpeech(speechText);
+      speechText = await translation.translateForSpeech(speechText);
     }
 
     final modifiedText = TextFormatter.formatForSpeech(speechText);
     print(
         '$_TAG Speaking: ${modifiedText.substring(0, modifiedText.length > 50 ? 50 : modifiedText.length)}...');
-    await _ttsService.speak(modifiedText);
+    await tts.speak(modifiedText);
 
     if (_autoListenAfterResponse && !_isThinking) {
       print('$_TAG Auto re-listen after TTS');
@@ -303,16 +339,30 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> resetConversationForTesting() async {
+    print('$_TAG resetConversationForTesting() called');
+    _chatMessages = <ChatMessage>[];
+    await _saveChatHistory();
+    await _aiService.initialize(_chatMessages);
+    notifyListeners();
+    print('$_TAG Testing conversation reset complete');
+  }
+
   Future<void> _startListeningSession() async {
+    final stt = _sttService;
+    final tts = _ttsService;
+    if (!_enableVoiceStack || stt == null || tts == null) {
+      return;
+    }
     if (_isListening || _isThinking) {
       return;
     }
 
-    await _ttsService.stop();
+    await tts.stop();
     _isListening = true;
     notifyListeners();
 
-    await _sttService.startListening(
+    await stt.startListening(
       onListeningStateChanged: (listening) {
         if (_isListening != listening) {
           _isListening = listening;
@@ -348,9 +398,15 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> toggleListening() async {
     print('$_TAG toggleListening() called, isListening: $_isListening');
+    final stt = _sttService;
+    if (!_enableVoiceStack || stt == null) {
+      _isListening = false;
+      notifyListeners();
+      return;
+    }
     if (_isListening) {
       _autoListenAfterResponse = false;
-      await _sttService.stop();
+      await stt.stop();
       _isListening = false;
     } else {
       _autoListenAfterResponse = true;
@@ -364,7 +420,10 @@ class AppProvider extends ChangeNotifier {
     _autoListenAfterResponse = false;
     _aiService.interrupt();
     _activeRequestId = null;
-    unawaited(_ttsService.stop());
+    final tts = _ttsService;
+    if (_enableVoiceStack && tts != null) {
+      unawaited(tts.stop());
+    }
     _isThinking = false;
     _chatMessages.add(ChatMessage(
       role: 'model',
@@ -375,8 +434,14 @@ class AppProvider extends ChangeNotifier {
 
   @override
   void dispose() {
-    unawaited(_ttsService.dispose());
-    _translationService.dispose();
+    final tts = _ttsService;
+    final translation = _translationService;
+    if (_enableVoiceStack && tts != null) {
+      unawaited(tts.dispose());
+    }
+    if (_enableVoiceStack && translation != null) {
+      translation.dispose();
+    }
     super.dispose();
   }
 }

@@ -1,75 +1,174 @@
 # AI Calendar Assistant
 
-A personal AI-powered assistant that combines real-time calendar management with the conversational prowess of cutting-edge AI. This app isn’t just about scheduling—it’s like having ChatGPT with full access to your Google Calendar, offering hands-free, voice-driven interaction with your schedule. 🚀🗓️
+An **agentic, voice-first calendar copilot** that doesn’t just chat about your schedule, it **acts on it**.
 
----
+This project started as “ChatGPT for my calendar.”  
+That idea stayed the same. The architecture is now far more advanced.
 
-## Features
+## At A Glance
 
-### 🌟 **AI-Powered Voice Chat**
-- Engage in **natural, intelligent conversations** about your calendar.
-- Query, add, update, and delete events using voice commands.
-- Powered by **Gemini AI**, providing context-aware responses that feel human.
+- Natural language + voice interface over real Google Calendar operations.
+- Android-first runtime (Firebase options and app permissions currently configured for Android).
+- Gemini model with tool-calling (create, update, delete, list, free/busy, find slots, colors).
+- Guardrailed mutation pipeline: retry logic + post-action verification against Calendar state.
+- Continuous hands-free loop: listen -> reason -> execute -> speak -> listen again.
+- Debug-first developer UX: execution traces and function calls visible in-chat (debug builds).
 
-### 🔄 **Real-Time Calendar Management**
-- Seamlessly integrates with **Google Calendar API** for live updates.
-- AI dynamically manages:
-  - Event creation, modification, and deletion.
-  - Conflict detection and resolution suggestions.
-- Handles complex queries like:
-  - *"What’s my week looking like?"*
-  - *"Find a 2-hour free slot next week for lunch at noon with my Dad!"*
-  - *"push my next meeting by an hour."*
+## What Makes This Different
 
-### 🎙️ **Voice Interaction**
-- **Speech-to-Text (STT)**: Speak naturally; your assistant understands.
-- **Text-to-Speech (TTS)**: Get spoken responses for a truly interactive experience.
+Most “AI calendar apps” generate text.  
+This one runs a **closed-loop action engine**:
 
-### 🤖 **AI-Enhanced Intelligence**
-- Understands vague or intricate requests and translates them into actionable calendar updates.
-- Smart conflict handling:
-  - Notifies of overlapping events.
-  - Suggests alternative times.
-- Context-aware and conversational:
-  - Remembers conversation history for smoother, more personalized interactions.
+1. Understand request.
+2. Call tools.
+3. Validate outcomes.
+4. Recover from failures.
+5. Only then commit to the user-facing answer.
 
----
+It is deliberately built like a small agent runtime, not a prompt wrapper.
 
-## Technical Overview
+## Current Architecture
 
-### **Technology Stack**
-- **Frontend**: Flutter (Cross-platform UI for a seamless experience).
-- **Backend**:
-  - **Google Calendar API** for direct calendar access.
-  - **Gemini AI** for chat-driven intelligence and real-time interactions.
-- **Integrations**:
-  - **STT**: Converts voice input to text commands.
-  - **TTS**: Speaks back responses for a hands-free user experience.
+```mermaid
+flowchart LR
+    U[User Voice/Text] --> P[AppProvider\nState + Orchestration]
+    P --> STT[Speech-to-Text]
+    P --> AI[AiService\nGemini + Tool Loop]
+    AI --> CAL[CalendarService\nGoogle Calendar API]
+    CAL --> AI
+    AI --> TF[TextFormatter + Date Humanizer]
+    TF --> TR[TranslationService\n(Non-English -> English for speech)]
+    TR --> TTS[TtsService\nDevice TTS or Cloud TTS endpoint]
+    TTS --> U
+    P <--> STORE[SharedPreferences\nChat + Settings Persistence]
+    P --> CSV[CSV Logger\nAndroid Downloads]
+```
 
-### **Core Functionalities**
-1. **Real-Time Calendar Sync**: Events are fetched, created, or modified instantly using Google Calendar API.
-2. **Conversational AI**: Chat-like interactions, interpreting natural language to execute calendar operations.
-3. **Voice Control**: Speech-to-Text and Text-to-Speech integrations for a fully voice-driven experience.
+## Agent Runtime (The Core Genius)
 
----
+Inside `AiService`, the assistant runs a bounded tool loop (`maxAgentCycles = 12`) with safety rails:
 
-## Vision for the Future
+- **Function-calling tools** include:
+  - `addEvent`, `updateEvent`, `deleteEvent`
+  - `listEvents`, `getEventById`
+  - `getFreeBusy`, `findFreeSlots`
+  - `getEventColors`
+- **Conflict-first policy** is encoded in the system prompt:
+  - Before time mutations, inspect overlaps first.
+  - If conflicts exist, ask user to pick a resolution path.
+- **Mutation guardrails**:
+  - Retry transient/recoverable tool failures.
+  - Verify create/update/delete by re-fetching event state.
+  - Re-run verification flow when results are inconclusive.
+- **Availability integrity**:
+  - If user asks for free time, runtime enforces actual `findFreeSlots` usage before final answer.
+- **Color intelligence**:
+  - Human color names (`red`, `lavender`, `blue`) map to Google Calendar color IDs.
+  - Hex matching is supported via real color metadata lookup.
+- **Advanced patching**:
+  - Supports JSON patch-like updates through `advancedFieldsJson` for non-trivial event fields.
 
-Beyond personal use, this app opens the door for businesses to:
-- Provide customers with seamless AI-driven interactions to check availability or schedule meetings.
-- Enable AI representatives to act as virtual assistants, enhancing customer engagement.
+## Calendar Engine
 
-Imagine a world where your clients simply chat with your AI to book appointments or manage schedules—effortless, conversational, and efficient.
+`CalendarService` is not a thin wrapper. It handles practical complexity:
 
----
+- Auth via service account credentials.
+- Multi-calendar access with cached accessible calendar IDs.
+- Event-to-calendar indexing so follow-up updates/deletes target the correct calendar.
+- Recurring instance-aware deletion behavior.
+- Full event payload support:
+  - attendees, reminders, recurrence, visibility, transparency, source metadata, all-day handling, advanced fields.
+- Deterministic free-slot finding:
+  - merges busy ranges across calendars,
+  - applies day-window constraints,
+  - enforces minimum duration,
+  - returns actionable slot windows.
+
+## Voice + Language Stack
+
+- **STT**: streaming/partial recognition into live draft input.
+- **TTS**:
+  - Device TTS mode.
+  - Cloud TTS mode through a configurable endpoint (`assets/config.json`).
+  - Automatic fallback to device TTS if cloud synthesis fails.
+- **Translation for speech output**:
+  - Detects non-English segments.
+  - Translates to English for cleaner TTS delivery.
+  - Caches translated segments for repeated phrases.
+
+## Product Experience
+
+- WhatsApp-like chat UX with markdown rendering for model responses.
+- Model switching at runtime (Gemini 2.5 and Gemini 3 preview variants).
+- TTS engine switching at runtime (device/cloud).
+- Interrupt button while thinking.
+- Persisted conversation context with versioned invalidation.
+- Debug drawer per assistant message (prompt, execution trace, tool calls, raw response).
+
+## Repo Map
+
+- `google_calendar_ai_agent/lib/presentation/*` -> UI and state orchestration.
+- `google_calendar_ai_agent/lib/services/*` -> AI runtime, calendar integration, speech/translation stack.
+- `google_calendar_ai_agent/lib/core/*` -> prompt, constants, formatting, logging utilities.
+- `google_calendar_ai_agent/test/*` -> widget/unit coverage for critical behaviors.
+- `google_calendar_ai_agent/functions/*` -> Firebase Functions scaffold for cloud-side expansion.
+
+## Safe Testing (No Production Calendar Writes)
+
+The test suite is now built to run against injected **fake services** instead of real calendar/AI/TTS backends:
+
+- `AppProvider` supports dependency injection for calendar, AI, TTS, STT, and translation services.
+- Tests use in-memory fakes from `test/support/fakes.dart`.
+- Auto-listening and CSV logging are disabled in tests for deterministic, non-interactive runs.
+
+Recommended commands:
+
+```bash
+# from google_calendar_ai_agent/
+flutter test
+flutter test --coverage
+flutter test test/e2e/app_web_flow_test.dart -d chrome
+```
+
+Notes:
+
+- Use `-d chrome` for web-style E2E widget flow testing.  
+  `--platform chrome` can hang on some Flutter setups.
+- These tests do **not** mutate your production calendar because they never call live `CalendarService` integrations.
+
+## Guarded Production Calendar Test
+
+There is also a real integration suite that calls the live Google Calendar API with strict write guards:
+
+- Writes are constrained to **January 2027** only.
+- Test-created event titles must include `test_event_in_`.
+- Cleanup only removes events that match that title pattern in that month.
+
+Run it explicitly (it is skipped by default):
+
+```powershell
+# from google_calendar_ai_agent/
+$env:RUN_PRODUCTION_CALENDAR_TESTS='true'
+flutter test test/production/calendar_production_jan_2027_test.dart -r expanded
+```
+
+## Why There Is No Install Guide
+
+This is a **private personal system**, not a plug-and-play open-source package.
+
+It depends on private credentials/configuration (calendar access, Firebase project wiring, cloud endpoints, personal preferences), so the README focuses on **architecture and ideas**, not “clone + run.”
 
 ## Demo Video
 
 <a href="https://www.youtube.com/watch?v=GhVEaJZW7uU" target="_blank">
-    <img src="https://img.youtube.com/vi/GhVEaJZW7uU/0.jpg" alt="AI Calendar Assistant Demo on YouTube (5 Minutes)" width="300"/>
+    <img src="https://img.youtube.com/vi/GhVEaJZW7uU/0.jpg" alt="AI Calendar Assistant Demo on YouTube" width="320"/>
 </a>
 
----
+## Vision
+
+Today: a personal AI scheduler with real execution reliability.  
+Tomorrow: the same architecture can power customer-facing booking agents, internal scheduling copilots, and vertical assistants where conversational UX must still produce deterministic operational outcomes.
+
 ## Disclaimer
 
-This app is a **personal project**, tailored exclusively to my needs and lifestyle. It uses private APIs and configurations and is not intended for distribution.
+Personal project. Private APIs/configuration. Not intended for general distribution in its current form.

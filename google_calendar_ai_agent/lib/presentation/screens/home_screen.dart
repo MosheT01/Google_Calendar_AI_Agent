@@ -215,6 +215,26 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           body: Column(
             children: [
+              if (provider.errorMessage != null)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade100,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.orange.shade300),
+                  ),
+                  child: Text(
+                    provider.errorMessage!,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.lato(
+                      color: Colors.brown.shade900,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
               Expanded(
                 child: ChatListView(
                   messages: provider.chatMessages,

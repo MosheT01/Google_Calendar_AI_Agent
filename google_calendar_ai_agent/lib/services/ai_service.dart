@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:firebase_ai/firebase_ai.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:googleapis/calendar/v3.dart' as calendar;
 import '../core/constants/app_constants.dart';
 import '../core/constants/system_prompt.dart';
@@ -66,16 +67,107 @@ class AiService {
     _appendTrace('Interrupted by user');
   }
 
-  Future<void> initialize(List<ChatMessage> history) async {
-    print('$_TAG Initializing with model: $_currentModel');
+  Future<void> _ensureFirebaseInitialized() async {
+    if (Firebase.apps.isNotEmpty) {
+      return;
+    }
+
+    if (kIsWeb) {
+      final webOptions = _loadWebFirebaseOptionsFromDefine();
+      if (webOptions != null) {
+        await Firebase.initializeApp(options: webOptions);
+        print('$_TAG Firebase initialized from web runtime define');
+        return;
+      }
+
+      try {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+        print('$_TAG Firebase initialized from default options');
+        return;
+      } on UnsupportedError {
+        throw StateError(
+          'Web Firebase options are not configured. '
+          'Pass --dart-define=WEB_FIREBASE_OPTIONS_B64=<base64-json> '
+          'or --dart-define=E2E_WEB_FIREBASE_OPTIONS_B64=<base64-json>.',
+        );
+      }
+    }
+
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    print('$_TAG Firebase initialized from default options');
+  }
+
+  FirebaseOptions? _loadWebFirebaseOptionsFromDefine() {
+    const explicit = String.fromEnvironment(
+      'WEB_FIREBASE_OPTIONS_B64',
+      defaultValue: '',
+    );
+    const e2eEncoded = String.fromEnvironment(
+      'E2E_WEB_FIREBASE_OPTIONS_B64',
+      defaultValue: '',
+    );
+    final encoded = explicit.trim().isNotEmpty ? explicit : e2eEncoded;
+    final trimmed = encoded.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
 
     try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
+      final normalized = base64.normalize(trimmed);
+      final decoded = utf8.decode(base64.decode(normalized));
+      final parsed = jsonDecode(decoded);
+      if (parsed is! Map) {
+        throw const FormatException(
+            'Decoded web Firebase options are not JSON object');
+      }
+      final map = parsed.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      String requireString(String key) {
+        final value = map[key]?.toString().trim();
+        if (value == null || value.isEmpty) {
+          throw FormatException('Missing required Firebase option: $key');
+        }
+        return value;
+      }
+
+      String? optionalString(String key) {
+        final value = map[key]?.toString().trim();
+        if (value == null || value.isEmpty) {
+          return null;
+        }
+        return value;
+      }
+
+      return FirebaseOptions(
+        apiKey: requireString('apiKey'),
+        appId: requireString('appId'),
+        messagingSenderId: requireString('messagingSenderId'),
+        projectId: requireString('projectId'),
+        authDomain: optionalString('authDomain'),
+        storageBucket: optionalString('storageBucket'),
+        measurementId: optionalString('measurementId'),
+        databaseURL: optionalString('databaseURL'),
+        iosBundleId: optionalString('iosBundleId'),
+        androidClientId: optionalString('androidClientId'),
+        iosClientId: optionalString('iosClientId'),
+        deepLinkURLScheme: optionalString('deepLinkURLScheme'),
+        appGroupId: optionalString('appGroupId'),
       );
     } catch (e) {
-      print('$_TAG Firebase already initialized or error: $e');
+      throw StateError(
+        'Invalid WEB_FIREBASE_OPTIONS_B64/E2E_WEB_FIREBASE_OPTIONS_B64 payload: $e',
+      );
     }
+  }
+
+  Future<void> initialize(List<ChatMessage> history) async {
+    print('$_TAG Initializing with model: $_currentModel');
+    await _ensureFirebaseInitialized();
 
     final ai = FirebaseAI.googleAI();
 
@@ -1011,7 +1103,8 @@ class AiService {
         return {
           ...successfulResult,
           'verified': false,
-          'verificationWarning': 'Operation interrupted before verification finished',
+          'verificationWarning':
+              'Operation interrupted before verification finished',
         };
       }
 

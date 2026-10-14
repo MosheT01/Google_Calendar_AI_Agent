@@ -3,7 +3,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 class CsvLogger {
   static const String _TAG = '[CsvLogger]';
-  
+
   static Future<void> log(String prompt, String response) async {
     print('$_TAG log() called');
     try {
@@ -33,13 +33,13 @@ class CsvLogger {
       }
 
       final timestamp = DateTime.now().toIso8601String();
-      
+
       // Escape quotes for CSV
       final escapedPrompt = prompt.replaceAll('"', '""');
       final escapedResponse = response.replaceAll('"', '""');
-      
+
       final csvLine = '"$timestamp","$escapedPrompt","$escapedResponse"\n';
-      
+
       print('$_TAG Writing line: ${csvLine.length} chars');
       await file.writeAsString(csvLine, mode: FileMode.append, flush: true);
       print('$_TAG ✓ Log written successfully');
