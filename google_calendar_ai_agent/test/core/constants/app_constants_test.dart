@@ -1,0 +1,22 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:google_calendar_ai_agent/core/constants/app_constants.dart';
+
+void main() {
+  group('AppConstants', () {
+    test('should have correct calendar email', () {
+      expect(AppConstants.calendarEmail, 'mousatams@gmail.com');
+    });
+
+    test('should have default model', () {
+      expect(AppConstants.defaultModel, 'gemini-2.5-flash');
+    });
+
+    test('should have max agent cycles', () {
+      expect(AppConstants.maxAgentCycles, 12);
+    });
+
+    test('should have timezone', () {
+      expect(AppConstants.timeZone, 'Asia/Jerusalem');
+    });
+  });
+}

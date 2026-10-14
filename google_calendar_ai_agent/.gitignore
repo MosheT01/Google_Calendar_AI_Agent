@@ -41,3 +41,12 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Credentials and secrets
+assets/gemini_api_key.json
+assets/service_account.json
+assets/config.json
+/assets/GoogleAPIs/
+**/credentials.json
+.env
+.env.*
