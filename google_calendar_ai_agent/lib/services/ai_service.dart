@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:firebase_ai/firebase_ai.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:googleapis/calendar/v3.dart' as calendar;
@@ -48,6 +49,7 @@ class AiService {
   CalendarService? _calendarService;
   bool _interrupted = false;
   bool _allowMutations = true;
+  bool _appCheckActivated = false;
 
   String? _lastPrompt;
   String? _lastTrace;
@@ -72,37 +74,61 @@ class AiService {
   }
 
   Future<void> _ensureFirebaseInitialized() async {
-    if (Firebase.apps.isNotEmpty) {
-      return;
-    }
-
-    if (kIsWeb) {
-      final webOptions = _loadWebFirebaseOptionsFromDefine();
-      if (webOptions != null) {
-        await Firebase.initializeApp(options: webOptions);
-        print('$_TAG Firebase initialized from web runtime define');
-        return;
-      }
-
-      try {
+    if (Firebase.apps.isEmpty) {
+      if (kIsWeb) {
+        final webOptions = _loadWebFirebaseOptionsFromDefine();
+        if (webOptions != null) {
+          await Firebase.initializeApp(options: webOptions);
+          print('$_TAG Firebase initialized from web runtime define');
+        } else {
+          try {
+            await Firebase.initializeApp(
+              options: DefaultFirebaseOptions.currentPlatform,
+            );
+            print('$_TAG Firebase initialized from default options');
+          } on UnsupportedError {
+            throw StateError(
+              'Web Firebase options are not configured. '
+              'Pass --dart-define=WEB_FIREBASE_OPTIONS_B64=<base64-json> '
+              'or --dart-define=E2E_WEB_FIREBASE_OPTIONS_B64=<base64-json>.',
+            );
+          }
+        }
+      } else {
         await Firebase.initializeApp(
           options: DefaultFirebaseOptions.currentPlatform,
         );
         print('$_TAG Firebase initialized from default options');
-        return;
-      } on UnsupportedError {
-        throw StateError(
-          'Web Firebase options are not configured. '
-          'Pass --dart-define=WEB_FIREBASE_OPTIONS_B64=<base64-json> '
-          'or --dart-define=E2E_WEB_FIREBASE_OPTIONS_B64=<base64-json>.',
-        );
       }
     }
 
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
+    await _activateAppCheck();
+  }
+
+  Future<void> _activateAppCheck() async {
+    if (_appCheckActivated) {
+      return;
+    }
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+
+    const configuredDebugToken = String.fromEnvironment(
+      'APP_CHECK_DEBUG_TOKEN',
     );
-    print('$_TAG Firebase initialized from default options');
+    final debugToken = configuredDebugToken.trim();
+    await FirebaseAppCheck.instance.activate(
+      providerAndroid: kDebugMode
+          ? AndroidDebugProvider(
+              debugToken: debugToken.isEmpty ? null : debugToken,
+            )
+          : const AndroidPlayIntegrityProvider(),
+    );
+    _appCheckActivated = true;
+    print(
+      '$_TAG Firebase App Check activated '
+      '(${kDebugMode ? 'debug' : 'play integrity'})',
+    );
   }
 
   FirebaseOptions? _loadWebFirebaseOptionsFromDefine() {
